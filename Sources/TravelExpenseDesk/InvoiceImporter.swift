@@ -9,14 +9,41 @@ struct InvoiceImportResult {
     var duplicatesSkipped: Int = 0
 }
 
+private struct RecognizedInvoiceDocument {
+    var text: String
+    var sourceKind: SegmentSourceKind
+}
+
+private struct ParsedTravelSegment {
+    var segment: TravelSegment
+    var sourceKind: SegmentSourceKind
+}
+
+private enum SegmentSourceKind {
+    case didiTrip
+    case didiInvoice
+    case other
+
+    var priority: Int {
+        switch self {
+        case .didiTrip:
+            return 20
+        case .didiInvoice:
+            return 10
+        case .other:
+            return 0
+        }
+    }
+}
+
 enum InvoiceImporter {
     static func parse(attachments: [AttachmentItem]) -> InvoiceImportResult {
         var result = InvoiceImportResult()
-        var parsedSegments: [TravelSegment] = []
+        var parsedSegments: [ParsedTravelSegment] = []
 
         for attachment in attachments {
-            let text = recognizedText(for: attachment)
-            guard let segment = parseSegment(from: text, attachment: attachment) else {
+            let document = recognizedDocument(for: attachment)
+            guard let segment = parseSegment(from: document, attachment: attachment) else {
                 continue
             }
 
@@ -24,37 +51,67 @@ enum InvoiceImporter {
             parsedSegments.append(segment)
         }
 
-        let attachmentsByID = Dictionary(uniqueKeysWithValues: attachments.map { ($0.id, $0) })
-        result.segments = TravelSegmentDeduplicator.deduplicated(parsedSegments, attachmentsByID: attachmentsByID)
+        let deduplicatedSegments = TravelSegmentDeduplicator.deduplicated(parsedSegments)
+        result.segments = deduplicatedSegments.map(\.segment)
         result.duplicatesSkipped = max(0, parsedSegments.count - result.segments.count)
 
         return result
     }
 
-    private static func recognizedText(for attachment: AttachmentItem) -> String {
+    private static func recognizedDocument(for attachment: AttachmentItem) -> RecognizedInvoiceDocument {
         let url = URL(fileURLWithPath: attachment.storedPath)
-        let fileName = attachment.fileName.replacingOccurrences(of: "_", with: " ")
+        let text: String
 
         switch attachment.kind {
         case .pdf:
-            let text = PDFDocument(url: url)?.string ?? ""
-            return "\(fileName)\n\(text)"
+            let document = PDFDocument(url: url)
+            let embeddedText = document?.string ?? ""
+            if let document, shouldRunOCRFallback(for: embeddedText) {
+                text = [embeddedText, recognizedPDFImageText(from: document)]
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .joined(separator: "\n")
+            } else {
+                text = embeddedText
+            }
         case .image:
-            return "\(fileName)\n\(recognizedImageText(from: url))"
+            text = recognizedImageText(from: url)
         case .file:
-            return fileName
+            text = ""
         }
+
+        return RecognizedInvoiceDocument(text: text, sourceKind: sourceKind(in: text))
+    }
+
+    private static func shouldRunOCRFallback(for text: String) -> Bool {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedText.count < 40 || bestAmount(in: trimmedText) == nil
+    }
+
+    private static func recognizedPDFImageText(from document: PDFDocument) -> String {
+        let pageCount = min(document.pageCount, 3)
+        guard pageCount > 0 else { return "" }
+
+        return (0..<pageCount).compactMap { pageIndex -> String? in
+            guard let page = document.page(at: pageIndex) else { return nil }
+            let bounds = page.bounds(for: .mediaBox)
+            guard bounds.width > 0, bounds.height > 0 else { return nil }
+
+            let width: CGFloat = 1800
+            let height = width * bounds.height / bounds.width
+            let image = page.thumbnail(of: NSSize(width: width, height: height), for: .mediaBox)
+            let text = recognizedText(from: image)
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+        }
+        .joined(separator: "\n")
     }
 
     private static func recognizedImageText(from url: URL) -> String {
-        guard
-            let image = NSImage(contentsOf: url),
-            let tiffData = image.tiffRepresentation,
-            let bitmap = NSBitmapImageRep(data: tiffData),
-            let cgImage = bitmap.cgImage
-        else {
-            return ""
-        }
+        guard let image = NSImage(contentsOf: url) else { return "" }
+        return recognizedText(from: image)
+    }
+
+    private static func recognizedText(from image: NSImage) -> String {
+        guard let cgImage = cgImage(from: image) else { return "" }
 
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
@@ -73,10 +130,29 @@ enum InvoiceImporter {
             .joined(separator: "\n") ?? ""
     }
 
-    private static func parseSegment(from text: String, attachment: AttachmentItem) -> TravelSegment? {
+    private static func cgImage(from image: NSImage) -> CGImage? {
+        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            return cgImage
+        }
+
+        guard
+            let tiffData = image.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiffData)
+        else {
+            return nil
+        }
+
+        return bitmap.cgImage
+    }
+
+    private static func parseSegment(
+        from document: RecognizedInvoiceDocument,
+        attachment: AttachmentItem
+    ) -> ParsedTravelSegment? {
+        let text = document.text
         let route = routePlaces(in: text)
-        let amount = firstAmount(in: text) ?? 0
-        let date = firstDate(in: text) ?? Date()
+        let amount = bestAmount(in: text) ?? 0
+        let date = travelDate(in: text) ?? invoiceDate(in: text) ?? Date()
 
         guard route != nil || amount > 0 else {
             return nil
@@ -96,7 +172,7 @@ enum InvoiceImporter {
             segment.toPlace = route.to
         }
 
-        return segment
+        return ParsedTravelSegment(segment: segment, sourceKind: document.sourceKind)
     }
 
     private static func transportMode(in text: String) -> TransportMode {
@@ -125,15 +201,12 @@ enum InvoiceImporter {
     }
 
     private static func routePlaces(in text: String) -> (from: String, to: String)? {
-        let cities = cityMatches(in: text)
-        if cities.count >= 2 {
-            return (cities[0], cities[1])
-        }
-
         let patterns = [
-            #"([\p{Han}A-Za-z]{2,12})\s*(?:至|到|→|--|—|-)\s*([\p{Han}A-Za-z]{2,12})"#,
-            #"出发地[:：\s]*([\p{Han}A-Za-z]{2,12}).*目的地[:：\s]*([\p{Han}A-Za-z]{2,12})"#,
-            #"起点[:：\s]*([\p{Han}A-Za-z]{2,12}).*终点[:：\s]*([\p{Han}A-Za-z]{2,12})"#
+            #"行\s*程\s*信\s*息[:：\s]*(?:20\d{2}[-年/\.]\d{1,2}[-月/\.]\d{1,2}日?\s*)?([\p{Han}A-Za-z]{2,12})\s*(?:至|到|→|--|—|-|_)\s*([\p{Han}A-Za-z]{2,12})"#,
+            #"([\p{Han}A-Za-z]{2,12})站\s+([\p{Han}A-Za-z]{2,12})站"#,
+            #"出\s*发\s*地[:：\s]*([\p{Han}A-Za-z]{2,12}).{0,80}?到\s*达\s*地[:：\s]*([\p{Han}A-Za-z]{2,12})"#,
+            #"出\s*发\s*地[:：\s]*([\p{Han}A-Za-z]{2,12}).{0,80}?目\s*的\s*地[:：\s]*([\p{Han}A-Za-z]{2,12})"#,
+            #"起\s*点[:：\s]*([\p{Han}A-Za-z]{2,20}).{0,80}?终\s*点[:：\s]*([\p{Han}A-Za-z]{2,20})"#
         ]
 
         for pattern in patterns {
@@ -147,7 +220,56 @@ enum InvoiceImporter {
             }
         }
 
+        return didiAirportRoute(in: text)
+    }
+
+    private static func didiAirportRoute(in text: String) -> (from: String, to: String)? {
+        guard text.localizedCaseInsensitiveContains("滴滴") else { return nil }
+        guard let city = cityMatches(in: text).first else { return nil }
+
+        let rowText: String
+        if let headerRange = text.range(of: "备注") {
+            rowText = String(text[headerRange.upperBound...])
+        } else {
+            rowText = text
+        }
+
+        guard let airportRange = airportTokenRange(in: rowText) else { return nil }
+        let airportName = airportName(in: text, fallbackCity: city)
+        let cityName = city.replacingOccurrences(of: "市", with: "")
+        let beforeAirport = String(rowText[..<airportRange.lowerBound])
+        let afterAirport = String(rowText[airportRange.upperBound...])
+        let localDestinationTerms = ["怡景江南", "阳光大道", "庙山", "小区", "酒店", "公司", "家"]
+
+        if containsAny(afterAirport, localDestinationTerms) {
+            return (airportName, cityName)
+        }
+        if containsAny(beforeAirport, localDestinationTerms) {
+            return (cityName, airportName)
+        }
+
         return nil
+    }
+
+    private static func airportTokenRange(in text: String) -> Range<String.Index>? {
+        ["机场", "航站楼", "天河-T", "天河T", "天河国际"].compactMap { token in
+            text.range(of: token)
+        }
+        .sorted { $0.lowerBound < $1.lowerBound }
+        .first
+    }
+
+    private static func airportName(in text: String, fallbackCity: String) -> String {
+        if text.contains("天河") {
+            return "武汉天河机场"
+        }
+        if text.contains("首都") {
+            return "北京首都机场"
+        }
+        if text.contains("大兴") {
+            return "北京大兴机场"
+        }
+        return "\(fallbackCity.replacingOccurrences(of: "市", with: ""))机场"
     }
 
     private static func cityMatches(in text: String) -> [String] {
@@ -172,7 +294,74 @@ enum InvoiceImporter {
         return unique
     }
 
-    private static func firstDate(in text: String) -> Date? {
+    private static func travelDate(in text: String) -> Date? {
+        if let date = didiBoardingDate(in: text) {
+            return date
+        }
+
+        let patterns = [
+            #"行\s*程\s*信\s*息[:：\s]*(20\d{2})[-年/\.](\d{1,2})[-月/\.](\d{1,2})日?\s*(\d{1,2})?[:：时]?(\d{1,2})?"#,
+            #"(20\d{2})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[:：](\d{1,2})\s*开"#,
+            #"出\s*行\s*日\s*期[:：\s]*(20\d{2})[-年/\.](\d{1,2})[-月/\.](\d{1,2})日?\s*(\d{1,2})?[:：时]?(\d{1,2})?"#,
+            #"行\s*程\s*起\s*止\s*日\s*期[:：\s]*(20\d{2})[-年/\.](\d{1,2})[-月/\.](\d{1,2})日?"#
+        ]
+
+        for pattern in patterns {
+            guard let match = firstRegexMatch(pattern: pattern, in: text) else { continue }
+            if let date = date(
+                year: match[safe: 1],
+                month: match[safe: 2],
+                day: match[safe: 3],
+                hour: match[safe: 4],
+                minute: match[safe: 5]
+            ) {
+                return date
+            }
+        }
+
+        return nil
+    }
+
+    private static func didiBoardingDate(in text: String) -> Date? {
+        guard text.localizedCaseInsensitiveContains("滴滴") else { return nil }
+        guard let period = firstRegexMatch(
+            pattern: #"行\s*程\s*起\s*止\s*日\s*期[:：\s]*(20\d{2})[-年/\.](\d{1,2})[-月/\.](\d{1,2})日?"#,
+            in: text
+        ) else {
+            return nil
+        }
+
+        guard let year = period[safe: 1] else { return nil }
+        let boardingPattern = #"(\d{1,2})-(\d{1,2})\s+(\d{1,2})\s*[:：]\s*(\d{1,2})"#
+        if let boarding = firstRegexMatch(pattern: boardingPattern, in: text),
+           let month = boarding[safe: 1],
+           let day = boarding[safe: 2] {
+            return date(
+                year: year,
+                month: month,
+                day: day,
+                hour: boarding[safe: 3],
+                minute: boarding[safe: 4]
+            )
+        }
+
+        return date(year: year, month: period[safe: 2], day: period[safe: 3], hour: nil, minute: nil)
+    }
+
+    private static func invoiceDate(in text: String) -> Date? {
+        if let match = firstRegexMatch(
+            pattern: #"开\s*票\s*日\s*期[:：\s]*(20\d{2})[年/\-.](\d{1,2})[月/\-.](\d{1,2})日?\s*(\d{1,2})?[:：时]?(\d{1,2})?"#,
+            in: text
+        ) {
+            return date(
+                year: match[safe: 1],
+                month: match[safe: 2],
+                day: match[safe: 3],
+                hour: match[safe: 4],
+                minute: match[safe: 5]
+            )
+        }
+
         let currentYear = Calendar.current.component(.year, from: Date())
         let patterns = [
             #"(20\d{2})[年/\-.](\d{1,2})[月/\-.](\d{1,2})日?\s*(\d{1,2})?[:：时]?(\d{1,2})?"#,
@@ -203,25 +392,69 @@ enum InvoiceImporter {
         return nil
     }
 
-    private static func firstAmount(in text: String) -> Double? {
-        let amountPatterns = [
-            #"(?:金额|合计|票价|费用|实付|总价|￥|¥)\s*[:：]?\s*(\d{1,5}(?:\.\d{1,2})?)"#,
-            #"(\d{1,5}\.\d{1,2})"#
+    private static func date(
+        year: String?,
+        month: String?,
+        day: String?,
+        hour: String?,
+        minute: String?
+    ) -> Date? {
+        var components = DateComponents()
+        components.year = Int(year ?? "")
+        components.month = Int(month ?? "")
+        components.day = Int(day ?? "")
+        components.hour = Int(hour ?? "") ?? 9
+        components.minute = Int(minute ?? "") ?? 0
+        return Calendar.current.date(from: components)
+    }
+
+    private static func bestAmount(in text: String) -> Double? {
+        let normalizedText = text.replacingOccurrences(of: ",", with: "")
+        var candidates: [(amount: Double, priority: Int)] = []
+
+        let amountPatterns: [(pattern: String, priority: Int)] = [
+            (#"价\s*税\s*合\s*计[\s\S]{0,120}?小\s*写[\s\S]{0,30}?[¥￥]?\s*(\d{1,6}(?:\.\d{1,2})?)"#, 100),
+            (#"小\s*写[\s\S]{0,20}?[¥￥]\s*(\d{1,6}(?:\.\d{1,2})?)"#, 95),
+            (#"小\s*写[\s\S]{0,10}?(\d{1,6}(?:\.\d{1,2})?)"#, 90),
+            (#"合\s*计\s*(\d{1,6}(?:\.\d{1,2})?)\s*元"#, 85),
+            (#"票\s*价\s*[:：]?\s*[¥￥]?\s*(\d{1,6}(?:\.\d{1,2})?)"#, 80),
+            (#"实\s*付(?:\s*金\s*额)?\s*[:：]?\s*[¥￥]?\s*(\d{1,6}(?:\.\d{1,2})?)"#, 80),
+            (#"总\s*价\s*[:：]?\s*[¥￥]?\s*(\d{1,6}(?:\.\d{1,2})?)"#, 75),
+            (#"[¥￥]\s*(\d{1,6}(?:\.\d{1,2})?)"#, 60)
         ]
 
-        for pattern in amountPatterns {
-            let matches = regexMatches(pattern: pattern, in: text)
-            let amounts = matches.compactMap { groups -> Double? in
-                guard groups.count > 1 else { return nil }
-                return Double(groups[1])
-            }
-            let plausible = amounts.filter { $0 > 0 && $0 < 100_000 }
-            if let amount = plausible.max() {
-                return amount
+        for amountPattern in amountPatterns {
+            for match in regexMatches(pattern: amountPattern.pattern, in: normalizedText) {
+                guard let amount = parseAmount(match[safe: 1]) else { continue }
+                guard amount > 0, amount < 100_000 else { continue }
+                candidates.append((amount, amountPattern.priority))
             }
         }
 
-        return nil
+        return candidates.sorted {
+            if $0.priority == $1.priority {
+                return $0.amount > $1.amount
+            }
+            return $0.priority > $1.priority
+        }
+        .first?.amount
+    }
+
+    private static func parseAmount(_ value: String?) -> Double? {
+        guard let value else { return nil }
+        return Double(value.replacingOccurrences(of: ",", with: ""))
+    }
+
+    private static func sourceKind(in text: String) -> SegmentSourceKind {
+        if containsAny(text, ["滴滴出行-行程单", "DIDI TRAVEL", "共1笔行程", "笔行程"]) {
+            return .didiTrip
+        }
+
+        if containsAny(text, ["滴滴出行科技有限公司", "旅客运输服务"]) {
+            return .didiInvoice
+        }
+
+        return .other
     }
 
     private static func cleanedPlace(_ value: String) -> String {
@@ -258,6 +491,25 @@ enum InvoiceImporter {
 }
 
 enum TravelSegmentDeduplicator {
+    fileprivate static func deduplicated(_ candidates: [ParsedTravelSegment]) -> [ParsedTravelSegment] {
+        var kept: [ParsedTravelSegment] = []
+
+        for candidate in candidates {
+            guard let duplicateIndex = kept.firstIndex(where: {
+                isDuplicateDidiPair($0, candidate)
+            }) else {
+                kept.append(candidate)
+                continue
+            }
+
+            if score(candidate) > score(kept[duplicateIndex]) {
+                kept[duplicateIndex] = candidate
+            }
+        }
+
+        return kept
+    }
+
     static func deduplicated(_ segments: [TravelSegment], attachmentsByID: [UUID: AttachmentItem]) -> [TravelSegment] {
         var kept: [TravelSegment] = []
 
@@ -275,6 +527,34 @@ enum TravelSegmentDeduplicator {
         }
 
         return kept
+    }
+
+    private static func isDuplicateDidiPair(
+        _ lhs: ParsedTravelSegment,
+        _ rhs: ParsedTravelSegment
+    ) -> Bool {
+        guard lhs.segment.transportMode == .taxi, rhs.segment.transportMode == .taxi else { return false }
+
+        let isTripAndInvoicePair = (lhs.sourceKind == .didiTrip && rhs.sourceKind == .didiInvoice)
+            || (lhs.sourceKind == .didiInvoice && rhs.sourceKind == .didiTrip)
+
+        guard isTripAndInvoicePair else { return false }
+        guard amountCents(lhs.segment.amount) == amountCents(rhs.segment.amount) else { return false }
+
+        return datesAreClose(lhs.segment.departAt, rhs.segment.departAt)
+    }
+
+    private static func score(_ candidate: ParsedTravelSegment) -> Int {
+        var score = candidate.sourceKind.priority
+
+        if !candidate.segment.fromPlace.isEmpty {
+            score += 1
+        }
+        if !candidate.segment.toPlace.isEmpty {
+            score += 1
+        }
+
+        return score
     }
 
     private static func isDuplicateDidiPair(
@@ -349,22 +629,6 @@ enum TravelSegmentDeduplicator {
         return distance <= 31
     }
 
-    private enum SegmentSourceKind {
-        case didiTrip
-        case didiInvoice
-        case other
-
-        var priority: Int {
-            switch self {
-            case .didiTrip:
-                return 20
-            case .didiInvoice:
-                return 10
-            case .other:
-                return 0
-            }
-        }
-    }
 }
 
 private extension Array {
