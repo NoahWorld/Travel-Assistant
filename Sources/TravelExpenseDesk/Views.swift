@@ -1199,6 +1199,13 @@ struct ProjectDetailView: View {
         )
     }
 
+    private var projectPeriodText: String {
+        if project.hasEndDate {
+            return "\(project.startDate.formatted(AppFormatters.date)) - \(project.endDate.formatted(AppFormatters.date))"
+        }
+        return "\(project.startDate.formatted(AppFormatters.date)) - 至今"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             detailToolbar
@@ -1278,81 +1285,91 @@ struct ProjectDetailView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 18) {
+        HStack(alignment: .center, spacing: 16) {
             Button { } label: {
                 Image(systemName: "chevron.left")
-                    .font(.headline)
-                    .frame(width: 32, height: 32)
+                    .font(.headline.weight(.semibold))
+                    .frame(width: 34, height: 34)
             }
             .buttonStyle(.plain)
             .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+            .help("返回")
 
-            HStack(alignment: .center, spacing: 16) {
-                Button {
-                    isIconPickerPresented.toggle()
-                } label: {
-                    ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 62)
-                        .overlay(alignment: .bottomTrailing) {
-                            Image(systemName: "pencil.circle.fill")
-                                .font(.callout)
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(.white, project.projectAccent.color)
-                                .background(.background, in: Circle())
-                        }
-                }
-                .buttonStyle(.plain)
-                .help("更换项目图标")
-                .popover(isPresented: $isIconPickerPresented, arrowEdge: .bottom) {
-                    ProjectIconPicker(symbol: $project.projectSymbol, accent: $project.projectAccent)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 8) {
-                        TextField("项目名称", text: $project.name)
-                            .font(.title.bold())
-                            .textFieldStyle(.plain)
-                            .frame(maxWidth: 300)
-                        Image(systemName: "pencil")
+            Button {
+                isIconPickerPresented.toggle()
+            } label: {
+                ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 58)
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "pencil.circle.fill")
                             .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, project.projectAccent.color)
+                            .background(.background, in: Circle())
                     }
-
-                    HStack(spacing: 12) {
-                        StatusBadge(status: project.status)
-                        Picker("报销状态", selection: statusSelection) {
-                            ForEach(ProjectStatus.allCases) { status in
-                                Text(status.rawValue).tag(status)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 96)
-                        Label("行程单", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                        Label("创建于 \(project.createdAt.formatted(AppFormatters.date))", systemImage: "calendar")
-                        if !project.hasEndDate {
-                            Label("进行中", systemImage: "clock.arrow.circlepath")
-                        }
-                    }
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                }
+            }
+            .buttonStyle(.plain)
+            .help("更换项目图标")
+            .popover(isPresented: $isIconPickerPresented, arrowEdge: .bottom) {
+                ProjectIconPicker(symbol: $project.projectSymbol, accent: $project.projectAccent)
             }
 
-            Spacer()
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 9) {
+                    TextField("项目名称", text: $project.name)
+                        .font(.title.weight(.semibold))
+                        .textFieldStyle(.plain)
+                        .lineLimit(1)
+                        .frame(maxWidth: 360)
+
+                    Button {
+                        isProjectInfoPresented = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .help("编辑项目信息")
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        headerStatusControls
+                        HeaderMetaPill(icon: "calendar", text: projectPeriodText)
+                        HeaderMetaPill(icon: "tray.full", text: "创建 \(project.createdAt.formatted(AppFormatters.date))")
+                        if !project.hasEndDate {
+                            HeaderMetaPill(icon: "clock.arrow.circlepath", text: "进行中")
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        headerStatusControls
+                        HeaderMetaPill(icon: "calendar", text: projectPeriodText)
+                    }
+
+                    HStack(spacing: 8) {
+                        headerStatusControls
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+                .frame(height: 74)
 
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("报销总额")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        Text(project.totalAmount.formatted(AppFormatters.currency))
-                            .font(.title.bold())
-                            .foregroundStyle(project.projectAccent.color)
-                    }
-                    Spacer()
-                }
+                Text("报销总额")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(project.totalAmount.formatted(AppFormatters.currency))
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(project.projectAccent.color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
 
                 HStack(spacing: 8) {
                     Button {
@@ -1371,13 +1388,17 @@ struct ProjectDetailView: View {
                     .buttonStyle(.bordered)
                 }
             }
-            .padding(16)
-            .frame(width: 300)
-            .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+            .frame(width: 330, alignment: .leading)
         }
-        .padding(18)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
         .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(project.projectAccent.color)
+                .frame(width: 4)
+                .padding(.vertical, 18)
+        }
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppSurface.hairline))
         .shadow(color: .black.opacity(0.025), radius: 12, x: 0, y: 4)
         .overlay(alignment: .bottomLeading) {
@@ -1391,6 +1412,22 @@ struct ProjectDetailView: View {
                     .offset(x: 24, y: 16)
             }
         }
+    }
+
+    private var headerStatusControls: some View {
+        HStack(spacing: 8) {
+            StatusBadge(status: project.status)
+
+            Picker("报销状态", selection: statusSelection) {
+                ForEach(ProjectStatus.allCases) { status in
+                    Text(status.rawValue).tag(status)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 100)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var detailTabs: some View {
@@ -1448,58 +1485,63 @@ struct ProjectDetailView: View {
 
     private var allowanceForm: some View {
         Panel(title: "出差时间与补助", systemImage: "clock", accent: .green) {
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 16) {
-                GridRow {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("开始日期").font(.caption).foregroundStyle(.secondary)
-                        DateInputField(selection: $project.startDate, mode: .dateTime, width: 220)
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 14) {
+                        AllowanceDateControl(
+                            title: "开始时间",
+                            icon: "arrow.up.right.circle",
+                            selection: $project.startDate,
+                            isActive: true,
+                            inactiveText: "",
+                            accent: .green
+                        )
+
+                        AllowanceDateControl(
+                            title: "结束时间",
+                            icon: "flag.checkered",
+                            selection: $project.endDate,
+                            isActive: project.hasEndDate,
+                            inactiveText: "按今天动态计算",
+                            accent: .green
+                        )
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("结束日期").font(.caption).foregroundStyle(.secondary)
-                        if project.hasEndDate {
-                            DateInputField(selection: $project.endDate, mode: .dateTime, width: 220)
-                        } else {
-                            Text("未结束时按今天动态计算天数和补助。")
-                                .font(.callout)
+                    HStack(alignment: .top, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("补助标准")
+                                .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                                .frame(minHeight: 28, alignment: .leading)
+
+                            HStack(spacing: 8) {
+                                DecimalTextField("例如 100", value: $project.allowanceRate)
+                                    .frame(width: 160)
+                                Text("元/天")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+
+                        Spacer(minLength: 12)
+
+                        Toggle("设置结束时间", isOn: $project.hasEndDate)
+                            .toggleStyle(.switch)
+                            .font(.callout.weight(.medium))
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                GridRow {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("补助标准（元/天）").font(.caption).foregroundStyle(.secondary)
-                        DecimalTextField("例如 100", value: $project.allowanceRate)
-                    }
+                Divider()
+                    .frame(height: 138)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("补助天数")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Toggle("使用补助计算", isOn: .constant(true))
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                        }
-                        Text(String(format: "%.1f 天", project.calculatedTravelDays))
-                            .font(.title3.bold())
-                            .foregroundStyle(project.projectAccent.color)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(project.projectAccent.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(project.projectAccent.color.opacity(0.18)))
-                    }
-                }
+                AllowanceSummary(
+                    days: String(format: "%.1f 天", project.calculatedTravelDays),
+                    rate: project.allowanceRate.formatted(AppFormatters.currency),
+                    amount: project.allowanceAmount.formatted(AppFormatters.currency),
+                    accent: project.projectAccent.color
+                )
+                .frame(width: 300)
             }
-
-            Toggle("设置结束时间", isOn: $project.hasEndDate)
-                .toggleStyle(.checkbox)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .onChange(of: project.hasEndDate) { _, isEnabled in
             if isEnabled, project.endDate <= project.startDate {
@@ -1786,6 +1828,8 @@ private struct StatusBadge: View {
     var body: some View {
         Label(status.rawValue, systemImage: icon)
             .font(.caption.bold())
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(tint.opacity(0.14), in: Capsule())
@@ -1854,6 +1898,107 @@ private struct ProjectIconBadge: View {
         }
         .frame(width: size, height: size)
         .accessibilityLabel(symbol.title)
+    }
+}
+
+private struct HeaderMetaPill: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: icon)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(AppSurface.cardSubtle, in: Capsule())
+            .overlay(Capsule().stroke(AppSurface.hairline))
+    }
+}
+
+private struct AllowanceDateControl: View {
+    let title: String
+    let icon: String
+    @Binding var selection: Date
+    let isActive: Bool
+    let inactiveText: String
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if isActive {
+                DateInputField(selection: $selection, mode: .dateTime, width: 236)
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(inactiveText)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(width: 236, height: 34)
+                .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+            }
+        }
+    }
+}
+
+private struct AllowanceSummary: View {
+    let days: String
+    let rate: String
+    let amount: String
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("补助计算")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(amount)
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+
+            VStack(spacing: 8) {
+                AllowanceSummaryRow(title: "补助天数", value: days)
+                AllowanceSummaryRow(title: "每日标准", value: rate)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(accent.opacity(0.16)))
+    }
+}
+
+private struct AllowanceSummaryRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+        }
     }
 }
 
