@@ -1,0 +1,22 @@
+.DS_Store
+
+# Swift Package Manager build output
+.build/
+.swiftpm/
+
+# Xcode local state
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Packaged app artifacts
+dist/
+*.app/
+*.zip
+Resources/AppIcon [0-9]*.icns
+
+# Local app data and backups
+projects.json
+Attachments/
+TravelExpenseDesk-data-backup-*/
+*data-backup*/
