@@ -107,7 +107,7 @@ struct ContentView: View {
 
             if selectedSection == .projects {
                 projectListColumn
-                    .frame(width: 480)
+                    .frame(width: 400)
 
                 Divider()
             }
@@ -222,11 +222,10 @@ struct ContentView: View {
                     .lineLimit(1)
             }
         }
-        .frame(width: 138, alignment: .leading)
-        .padding(.leading, 30)
-        .padding(.trailing, 8)
+        .frame(width: 128, alignment: .leading)
+        .padding(.horizontal, 12)
         .padding(.vertical, 16)
-        .frame(width: 176, alignment: .leading)
+        .frame(width: 152, alignment: .leading)
         .background(AppSurface.sidebar)
     }
 
@@ -298,13 +297,13 @@ struct ContentView: View {
     }
 
     private var projectListColumn: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("项目报销")
+                    Text("报销单")
                         .font(.title2.bold())
-                    Text("高效管理团队差旅与费用")
-                        .font(.callout)
+                    Text("共 \(filteredProjects.count) 条")
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
 
@@ -324,23 +323,22 @@ struct ContentView: View {
 
             searchField
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("快捷筛选")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
                     ForEach(ProjectListFilter.allCases) { filter in
                         FilterChip(title: filter.rawValue, isSelected: listFilter == filter, accent: store.appThemeAccent.color) {
                             listFilter = filter
                         }
                     }
                 }
+                .padding(.vertical, 1)
             }
 
-            HStack(spacing: 12) {
-                ProjectListMetricCard(title: "未发放报销", value: "\(store.unpaidCount) 单", footnote: "待报销和已报销", icon: "clock.badge.exclamationmark", tint: .orange)
-                ProjectListMetricCard(title: "未发放总额", value: store.unpaidTotal.formatted(AppFormatters.currency), footnote: "不含已发放", icon: "banknote", tint: .green)
-            }
+            ProjectListSummaryBar(
+                count: store.unpaidCount,
+                total: store.unpaidTotal.formatted(AppFormatters.currency),
+                accent: store.appThemeAccent.color
+            )
 
             HStack {
                 Text("报销列表")
@@ -384,29 +382,22 @@ struct ContentView: View {
             }
 
             HStack {
-                Text("共 \(filteredProjects.count) 条")
+                Text(selectedProjectFooterText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button { } label: {
-                    Image(systemName: "chevron.left")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                Text("1")
-                    .font(.caption.bold())
-                    .frame(width: 30, height: 28)
-                    .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
-                Button { } label: {
-                    Image(systemName: "chevron.right")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
             }
         }
-        .padding(22)
+        .padding(18)
         .background(AppSurface.card)
+    }
+
+    private var selectedProjectFooterText: String {
+        guard let selectedID = store.selectedProjectID,
+              let selected = store.projects.first(where: { $0.id == selectedID }) else {
+            return "未选择报销单"
+        }
+        return "当前：\(selected.name)"
     }
 
     private var searchField: some View {
@@ -562,12 +553,56 @@ private struct FilterChip: View {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(isSelected ? accent : .secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
                 .background(isSelected ? accent.opacity(0.10) : AppSurface.cardSubtle, in: Capsule())
                 .overlay(Capsule().stroke(isSelected ? accent.opacity(0.35) : Color.clear))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct ProjectListSummaryBar: View {
+    let count: Int
+    let total: String
+    let accent: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "chart.bar.doc.horizontal")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(accent)
+                .frame(width: 30, height: 30)
+                .background(accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 7))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("未发放")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(count) 单")
+                    .font(.headline.weight(.semibold))
+                    .lineLimit(1)
+            }
+
+            Divider()
+                .frame(height: 34)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("未发放总额")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(total)
+                    .font(.headline.weight(.semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
     }
 }
 
@@ -610,18 +645,19 @@ private struct ProjectListCard: View {
     private var accent: Color { project.projectAccent.color }
 
     var body: some View {
-        HStack(spacing: 13) {
-            ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 42)
+        HStack(spacing: 11) {
+            ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 38)
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(project.name)
-                        .font(.headline)
+                        .font(.callout.bold())
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Spacer()
                     Text(project.totalAmount.formatted(AppFormatters.currency))
-                        .font(.headline)
+                        .font(.callout.bold())
+                        .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                 }
@@ -643,7 +679,7 @@ private struct ProjectListCard: View {
                 }
             }
         }
-        .padding(14)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(isSelected ? accent.opacity(0.07) : AppSurface.card)
@@ -1258,55 +1294,93 @@ struct ProjectDetailView: View {
     }
 
     private var detailToolbar: some View {
-        HStack(spacing: 12) {
-            Spacer()
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                Label(project.name, systemImage: "doc.text")
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+
+                HeaderMetaPill(icon: "calendar", text: projectPeriodText)
+
+                Spacer()
+
+                toolbarActions(showLabels: true)
+            }
 
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("搜索快捷操作...", text: .constant(""))
-                    .textFieldStyle(.plain)
-                Text("⌘ K")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 5))
+                Text(project.name)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+
+                Spacer()
+
+                toolbarActions(showLabels: false)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 8)
-            .frame(width: 300)
-            .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
-
-            ToolbarIconButton(icon: "bell") {}
-            ToolbarIconButton(icon: "questionmark.circle") {}
-            ToolbarIconButton(icon: "sun.max") {}
-
-            Text("Z")
-                .font(.caption.bold())
-                .foregroundStyle(project.projectAccent.color)
-                .frame(width: 30, height: 30)
-                .background(project.projectAccent.color.opacity(0.12), in: Circle())
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            Button { } label: {
-                Image(systemName: "chevron.left")
-                    .font(.headline.weight(.semibold))
-                    .frame(width: 34, height: 34)
+    @ViewBuilder
+    private func toolbarActions(showLabels: Bool) -> some View {
+        Button {
+            chooseInvoices()
+        } label: {
+            if showLabels {
+                Label("导入发票", systemImage: "doc.text.viewfinder")
+            } else {
+                Image(systemName: "doc.text.viewfinder")
+                    .frame(width: 28, height: 26)
             }
-            .buttonStyle(.plain)
-            .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
-            .help("返回")
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(project.projectAccent.color)
+        .help("导入发票识别")
 
+        Button {
+            store.addTravelSegment(to: project.id)
+        } label: {
+            if showLabels {
+                Label("添加行程", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+            } else {
+                Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                    .frame(width: 28, height: 26)
+            }
+        }
+        .buttonStyle(.bordered)
+        .help("添加行程")
+
+        Button {
+            store.addExpense(to: project.id)
+        } label: {
+            if showLabels {
+                Label("添加费用", systemImage: "plus.rectangle.on.rectangle")
+            } else {
+                Image(systemName: "plus.rectangle.on.rectangle")
+                    .frame(width: 28, height: 26)
+            }
+        }
+        .buttonStyle(.bordered)
+        .help("添加费用")
+
+        Button {
+            exportPDF()
+        } label: {
+            if showLabels {
+                Label("导出 PDF", systemImage: "square.and.arrow.down")
+            } else {
+                Image(systemName: "square.and.arrow.down")
+                    .frame(width: 28, height: 26)
+            }
+        }
+        .buttonStyle(.bordered)
+        .help("导出 PDF")
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
             Button {
                 isIconPickerPresented.toggle()
             } label: {
-                ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 58)
+                ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 52)
                     .overlay(alignment: .bottomTrailing) {
                         Image(systemName: "pencil.circle.fill")
                             .font(.callout)
@@ -1321,13 +1395,13 @@ struct ProjectDetailView: View {
                 ProjectIconPicker(symbol: $project.projectSymbol, accent: $project.projectAccent)
             }
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 9) {
                     TextField("项目名称", text: $project.name)
-                        .font(.title.weight(.semibold))
+                        .font(.title2.weight(.semibold))
                         .textFieldStyle(.plain)
                         .lineLimit(1)
-                        .frame(maxWidth: 360)
+                        .frame(maxWidth: 420)
 
                     Button {
                         isProjectInfoPresented = true
@@ -1345,7 +1419,8 @@ struct ProjectDetailView: View {
                     HStack(spacing: 8) {
                         headerStatusControls
                         HeaderMetaPill(icon: "calendar", text: projectPeriodText)
-                        HeaderMetaPill(icon: "tray.full", text: "创建 \(project.createdAt.formatted(AppFormatters.date))")
+                        HeaderMetaPill(icon: "person", text: project.traveler.isEmpty ? "未填出差人" : project.traveler)
+                        HeaderMetaPill(icon: "mappin.and.ellipse", text: project.destination.isEmpty ? "未填目的地" : project.destination)
                         if !project.hasEndDate {
                             HeaderMetaPill(icon: "clock.arrow.circlepath", text: "进行中")
                         }
@@ -1363,51 +1438,38 @@ struct ProjectDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Divider()
-                .frame(height: 74)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("报销总额")
+            VStack(alignment: .trailing, spacing: 6) {
+                Text("项目合计")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
                 Text(project.totalAmount.formatted(AppFormatters.currency))
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(project.projectAccent.color)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
 
-                HStack(spacing: 8) {
-                    Button {
-                        store.toggleSettlement(for: project.id)
-                    } label: {
-                        Label(project.isSettled ? "取消发放" : "标记已发放", systemImage: project.isSettled ? "arrow.uturn.backward.circle" : "checkmark.circle")
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(project.isSettled ? .gray : .green)
-
-                    Button {
-                        exportPDF()
-                    } label: {
-                        Label("导出 PDF", systemImage: "square.and.arrow.down")
-                    }
-                    .buttonStyle(.bordered)
+                Button {
+                    store.toggleSettlement(for: project.id)
+                } label: {
+                    Label(project.isSettled ? "取消发放" : "标记已发放", systemImage: project.isSettled ? "arrow.uturn.backward.circle" : "checkmark.circle")
                 }
+                .buttonStyle(.bordered)
+                .tint(project.isSettled ? .gray : .green)
             }
-            .frame(width: 330, alignment: .leading)
+            .frame(width: 210, alignment: .trailing)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
-        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(project.projectAccent.color)
                 .frame(width: 4)
-                .padding(.vertical, 18)
+                .padding(.vertical, 16)
         }
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppSurface.hairline))
-        .shadow(color: .black.opacity(0.025), radius: 12, x: 0, y: 4)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
         .overlay(alignment: .bottomLeading) {
             if let exportMessage {
                 Label(exportMessage, systemImage: "checkmark.circle.fill")
@@ -1474,16 +1536,27 @@ struct ProjectDetailView: View {
     }
 
     private var summaryCards: some View {
-        Panel(title: "费用汇总", systemImage: "sum", accent: project.projectAccent.color) {
-            Grid(horizontalSpacing: 14, verticalSpacing: 12) {
-                GridRow {
-                    SummaryCard(title: "出差天数", value: String(format: "%.1f 天", project.calculatedTravelDays), icon: "calendar", tint: project.projectAccent.color)
-                    SummaryCard(title: "补助应发", value: project.allowanceAmount.formatted(AppFormatters.currency), icon: "banknote", tint: .green)
-                    SummaryCard(title: "行程/票据费用", value: project.expenseTotal.formatted(AppFormatters.currency), icon: "receipt", tint: .orange)
-                    SummaryCard(title: "项目合计", value: project.totalAmount.formatted(AppFormatters.currency), icon: "shippingbox.fill", tint: .purple)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) {
+                SummaryStripItem(title: "出差天数", value: String(format: "%.1f 天", project.calculatedTravelDays), icon: "calendar", tint: project.projectAccent.color)
+                SummaryDivider()
+                SummaryStripItem(title: "补助应发", value: project.allowanceAmount.formatted(AppFormatters.currency), icon: "banknote", tint: .green)
+                SummaryDivider()
+                SummaryStripItem(title: "票据费用", value: project.expenseTotal.formatted(AppFormatters.currency), icon: "receipt", tint: .orange)
+                SummaryDivider()
+                SummaryStripItem(title: "项目合计", value: project.totalAmount.formatted(AppFormatters.currency), icon: "shippingbox.fill", tint: .purple)
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                SummaryStripItem(title: "出差天数", value: String(format: "%.1f 天", project.calculatedTravelDays), icon: "calendar", tint: project.projectAccent.color)
+                SummaryStripItem(title: "补助应发", value: project.allowanceAmount.formatted(AppFormatters.currency), icon: "banknote", tint: .green)
+                SummaryStripItem(title: "票据费用", value: project.expenseTotal.formatted(AppFormatters.currency), icon: "receipt", tint: .orange)
+                SummaryStripItem(title: "项目合计", value: project.totalAmount.formatted(AppFormatters.currency), icon: "shippingbox.fill", tint: .purple)
             }
         }
+        .padding(14)
+        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
     }
 
     private var calendarSection: some View {
@@ -2060,6 +2133,45 @@ private struct DetailTabButton: View {
     }
 }
 
+private struct SummaryStripItem: View {
+    let title: String
+    let value: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.headline.weight(.semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+    }
+}
+
+private struct SummaryDivider: View {
+    var body: some View {
+        Divider()
+            .frame(height: 44)
+            .padding(.horizontal, 12)
+    }
+}
+
 private struct InfoItem: View {
     let icon: String
     let title: String
@@ -2224,12 +2336,12 @@ private struct Panel<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 9) {
                 Image(systemName: systemImage)
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(accent)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
                     .background(accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 7))
                 Text(title)
                     .font(.headline)
@@ -2237,13 +2349,12 @@ private struct Panel<Content: View>: View {
             }
             content
         }
-        .padding(18)
-        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 10))
+        .padding(16)
+        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(AppSurface.hairline)
         )
-        .shadow(color: .black.opacity(0.025), radius: 8, x: 0, y: 2)
     }
 }
 
