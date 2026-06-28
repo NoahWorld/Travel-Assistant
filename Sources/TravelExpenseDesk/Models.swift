@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProjectStatus: String, Codable, CaseIterable, Identifiable {
+enum ProjectStatus: String, Codable, CaseIterable, Identifiable, Sendable {
     case pending = "待报销"
     case reimbursed = "已报销"
     case disbursed = "已发放"
@@ -21,7 +21,7 @@ enum ProjectStatus: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum ExpenseCategory: String, Codable, CaseIterable, Identifiable {
+enum ExpenseCategory: String, Codable, CaseIterable, Identifiable, Sendable {
     case transportation = "交通费"
     case accommodation = "住宿费"
     case meal = "伙食费"
@@ -31,13 +31,13 @@ enum ExpenseCategory: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum AttachmentKind: String, Codable {
+enum AttachmentKind: String, Codable, Sendable {
     case image = "截图/图片"
     case pdf = "PDF"
     case file = "文件"
 }
 
-enum ProjectSymbol: String, Codable, CaseIterable, Identifiable {
+enum ProjectSymbol: String, Codable, CaseIterable, Identifiable, Sendable {
     case briefcase = "briefcase.fill"
     case train = "train.side.front.car"
     case airplane = "airplane"
@@ -71,7 +71,7 @@ enum ProjectSymbol: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum ProjectAccent: String, Codable, CaseIterable, Identifiable {
+enum ProjectAccent: String, Codable, CaseIterable, Identifiable, Sendable {
     case blue
     case green
     case teal
@@ -97,7 +97,7 @@ enum ProjectAccent: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum TransportMode: String, Codable, CaseIterable, Identifiable {
+enum TransportMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case highSpeedRail = "高铁"
     case flight = "飞机"
     case taxi = "打车"
@@ -112,14 +112,14 @@ enum TransportMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum ReimbursementDirection: String, Codable, CaseIterable, Identifiable {
+enum ReimbursementDirection: String, Codable, CaseIterable, Identifiable, Sendable {
     case oneWay = "单程报销"
     case roundTrip = "往返报销"
 
     var id: String { rawValue }
 }
 
-enum CityTier: String, Codable, CaseIterable, Identifiable {
+enum CityTier: String, Codable, CaseIterable, Identifiable, Sendable {
     case firstTier = "北京/上海/广州/深圳/天津/重庆"
     case provincialCapital = "省会城市（含青岛、厦门、苏州）"
     case prefecture = "地级市"
@@ -128,7 +128,7 @@ enum CityTier: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum EmployeeLevel: String, Codable, CaseIterable, Identifiable {
+enum EmployeeLevel: String, Codable, CaseIterable, Identifiable, Sendable {
     case generalManager = "一类 总经理"
     case deputyGeneralManager = "二类 副总经理"
     case departmentHead = "三类 部门负责人"
@@ -224,7 +224,7 @@ enum TravelStandard {
     }
 }
 
-struct AttachmentItem: Identifiable, Codable, Hashable {
+struct AttachmentItem: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var fileName: String
     var storedPath: String
@@ -233,7 +233,7 @@ struct AttachmentItem: Identifiable, Codable, Hashable {
     var addedAt: Date = Date()
 }
 
-struct ExpenseLine: Identifiable, Codable, Hashable {
+struct ExpenseLine: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var date: Date = Date()
     var category: ExpenseCategory = .transportation
@@ -241,7 +241,7 @@ struct ExpenseLine: Identifiable, Codable, Hashable {
     var amount: Double = 0
 }
 
-struct TravelSegment: Identifiable, Codable, Hashable {
+struct TravelSegment: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var departAt: Date = Date()
     var arriveAt: Date = Date()
@@ -260,7 +260,7 @@ struct TravelSegment: Identifiable, Codable, Hashable {
     }
 }
 
-struct ReimbursementProject: Identifiable, Codable, Hashable {
+struct ReimbursementProject: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var name: String
     var traveler: String = ""

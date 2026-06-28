@@ -2950,58 +2950,116 @@ private struct ProjectCalendarPanel: View {
     @Binding var project: ReimbursementProject
     let accent: Color
     @State private var selectedDate: Date?
+    @State private var isExpanded = false
 
-    private var calendarRevision: String {
-        let segmentDates = project.travelSegments
-            .map { "\($0.id.uuidString):\($0.departAt.timeIntervalSinceReferenceDate):\($0.arriveAt.timeIntervalSinceReferenceDate):\($0.amount)" }
-            .joined(separator: "|")
-        let expenseDates = project.expenses
-            .map { "\($0.id.uuidString):\($0.date.timeIntervalSinceReferenceDate):\($0.amount)" }
-            .joined(separator: "|")
-        return [
-            project.id.uuidString,
-            "\(project.startDate.timeIntervalSinceReferenceDate)",
-            "\(project.endDate.timeIntervalSinceReferenceDate)",
-            "\(project.hasEndDate)",
-            segmentDates,
-            expenseDates
-        ].joined(separator: "#")
+    private var dateRangeText: String {
+        if project.hasEndDate {
+            return "\(project.startDate.formatted(AppFormatters.date)) - \(project.endDate.formatted(AppFormatters.date))"
+        }
+        return "\(project.startDate.formatted(AppFormatters.date)) - 至今"
+    }
+
+    private var monthCountText: String {
+        "\(CalendarDisplay.months(for: project).count) 个月"
     }
 
     var body: some View {
         Panel(title: "日历视角", systemImage: "calendar", accent: accent) {
             VStack(alignment: .leading, spacing: 14) {
-                CalendarLegend(accent: accent)
+                calendarSummary
 
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 320, maximum: 420), spacing: 14)],
-                    alignment: .center,
-                    spacing: 14
-                ) {
-                    ForEach(CalendarDisplay.months(for: project), id: \.self) { month in
-                        CalendarMonthView(
-                            month: month,
-                            project: project,
-                            accent: accent,
-                            selectedDate: $selectedDate
-                        )
+                if isExpanded {
+                    CalendarLegend(accent: accent)
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 300, maximum: 400), spacing: 14)],
+                        alignment: .center,
+                        spacing: 14
+                    ) {
+                        ForEach(CalendarDisplay.months(for: project), id: \.self) { month in
+                            CalendarMonthView(
+                                month: month,
+                                project: project,
+                                accent: accent,
+                                selectedDate: $selectedDate
+                            )
+                        }
                     }
-                }
-                .id(calendarRevision)
-                .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .onAppear {
-                if selectedDate == nil {
-                    selectedDate = CalendarDisplay.initialSelectedDate(for: project)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                    if let selectedDate {
+                        CalendarDayDetail(project: project, date: selectedDate, accent: accent)
+                    }
                 }
             }
             .onChange(of: project.id) { _, _ in
-                selectedDate = CalendarDisplay.initialSelectedDate(for: project)
-            }
-            .onChange(of: calendarRevision) { _, _ in
-                selectedDate = CalendarDisplay.initialSelectedDate(for: project)
+                isExpanded = false
+                selectedDate = nil
             }
         }
+    }
+
+    private var calendarSummary: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 18) {
+                CalendarCompactMetric(title: "日期范围", value: dateRangeText, icon: "calendar", tint: accent)
+                CalendarCompactMetric(title: "日历跨度", value: monthCountText, icon: "square.grid.3x3", tint: .purple)
+                CalendarCompactMetric(title: "行程", value: "\(project.travelSegments.count) 条", icon: "point.topleft.down.curvedto.point.bottomright.up", tint: .blue)
+                CalendarCompactMetric(title: "费用", value: "\(project.expenses.count) 条", icon: "receipt", tint: .orange)
+                Spacer(minLength: 0)
+                toggleButton
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    CalendarCompactMetric(title: "日期范围", value: dateRangeText, icon: "calendar", tint: accent)
+                    CalendarCompactMetric(title: "日历跨度", value: monthCountText, icon: "square.grid.3x3", tint: .purple)
+                    CalendarCompactMetric(title: "行程", value: "\(project.travelSegments.count) 条", icon: "point.topleft.down.curvedto.point.bottomright.up", tint: .blue)
+                    CalendarCompactMetric(title: "费用", value: "\(project.expenses.count) 条", icon: "receipt", tint: .orange)
+                }
+                toggleButton
+            }
+        }
+    }
+
+    private var toggleButton: some View {
+        Button {
+            isExpanded.toggle()
+            if isExpanded, selectedDate == nil {
+                selectedDate = CalendarDisplay.initialSelectedDate(for: project)
+            }
+        } label: {
+            Label(isExpanded ? "收起日历" : "展开日历", systemImage: isExpanded ? "chevron.up" : "chevron.down")
+        }
+        .buttonStyle(.bordered)
+    }
+}
+
+private struct CalendarCompactMetric: View {
+    let title: String
+    let value: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -5,9 +5,12 @@ final class ProjectStore: ObservableObject {
     private static let themeAccentKey = "TravelExpenseDesk.themeAccent"
     private static let appearanceModeKey = "TravelExpenseDesk.appearanceMode"
     private static let menuBarStageDayKey = "TravelExpenseDesk.menuBarStageDay"
+    private let persistenceWriter = ProjectPersistenceWriter()
+    private var pendingSaveTask: Task<Void, Never>?
+    private var isLoading = false
 
     @Published var projects: [ReimbursementProject] = [] {
-        didSet { save() }
+        didSet { scheduleSave() }
     }
 
     @Published var appAppearanceMode: AppAppearanceMode {
@@ -254,15 +257,7 @@ final class ProjectStore: ObservableObject {
     }
 
     func save() {
-        do {
-            let url = try AttachmentManager.dataFileURL()
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(projects)
-            try data.write(to: url, options: .atomic)
-        } catch {
-            lastError = "保存失败：\(error.localizedDescription)"
-        }
+        persistCurrentProjects(after: nil)
     }
 
     private func load() {
@@ -272,9 +267,40 @@ final class ProjectStore: ObservableObject {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
+            isLoading = true
+            defer { isLoading = false }
             projects = try decoder.decode([ReimbursementProject].self, from: data)
         } catch {
+            isLoading = false
             lastError = "读取历史失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func scheduleSave() {
+        guard !isLoading else { return }
+        persistCurrentProjects(after: 300_000_000)
+    }
+
+    private func persistCurrentProjects(after delay: UInt64?) {
+        guard !isLoading else { return }
+        let snapshot = projects
+        let writer = persistenceWriter
+
+        pendingSaveTask?.cancel()
+        pendingSaveTask = Task.detached(priority: .utility) { [weak self, snapshot, writer] in
+            do {
+                if let delay {
+                    try await Task.sleep(nanoseconds: delay)
+                    try Task.checkCancellation()
+                }
+                try await writer.write(snapshot)
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    self?.lastError = "保存失败：\(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -304,5 +330,15 @@ final class ProjectStore: ObservableObject {
         }
 
         return removedCount
+    }
+}
+
+private actor ProjectPersistenceWriter {
+    func write(_ projects: [ReimbursementProject]) throws {
+        let url = try AttachmentManager.dataFileURL()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(projects)
+        try data.write(to: url, options: .atomic)
     }
 }
