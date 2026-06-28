@@ -11,7 +11,7 @@ struct TravelExpenseDeskApp: App {
             ContentView()
                 .environmentObject(store)
                 .preferredColorScheme(store.appAppearanceMode.colorScheme)
-                .frame(minWidth: 1120, minHeight: 740)
+                .frame(minWidth: 940, minHeight: 660)
         }
         .defaultSize(width: 1180, height: 780)
         .commands {

@@ -94,29 +94,29 @@ struct ContentView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            if isSidebarCollapsed {
-                collapsedNavigationRail
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            } else {
-                navigationSidebar
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-
-            Divider()
-
-            if selectedSection == .projects {
-                projectListColumn
-                    .frame(width: 400)
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                if isSidebarCollapsed {
+                    collapsedNavigationRail
+                } else {
+                    navigationSidebar
+                }
 
                 Divider()
-            }
 
-            detailContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if selectedSection == .projects {
+                    projectListColumn
+                        .frame(width: projectListWidth(for: proxy.size.width))
+
+                    Divider()
+                }
+
+                detailContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(AppSurface.pageBackground)
         }
         .background(AppSurface.pageBackground)
-        .animation(.easeInOut(duration: 0.18), value: isSidebarCollapsed)
         .alert("确认删除项目？", isPresented: Binding(
             get: { store.projectPendingDeletionID != nil },
             set: { if !$0 { store.projectPendingDeletionID = nil } }
@@ -164,7 +164,7 @@ struct ContentView: View {
                 Spacer()
 
                 Button {
-                    isSidebarCollapsed = true
+                    setSidebarCollapsed(true)
                 } label: {
                     Image(systemName: "sidebar.leading")
                         .font(.callout.weight(.semibold))
@@ -232,7 +232,7 @@ struct ContentView: View {
     private var collapsedNavigationRail: some View {
         VStack(spacing: 12) {
             Button {
-                isSidebarCollapsed = false
+                setSidebarCollapsed(false)
             } label: {
                 Image(systemName: "sidebar.leading")
                     .font(.headline.weight(.semibold))
@@ -294,6 +294,21 @@ struct ContentView: View {
         .padding(.vertical, 14)
         .frame(width: 64)
         .background(AppSurface.sidebar)
+    }
+
+    private func setSidebarCollapsed(_ collapsed: Bool) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isSidebarCollapsed = collapsed
+        }
+    }
+
+    private func projectListWidth(for totalWidth: CGFloat) -> CGFloat {
+        guard selectedSection == .projects else { return 0 }
+        let sidebarWidth: CGFloat = isSidebarCollapsed ? 64 : 152
+        let availableWidth = max(totalWidth - sidebarWidth, 0)
+        return min(340, max(292, availableWidth * 0.28))
     }
 
     private var projectListColumn: some View {
@@ -388,7 +403,7 @@ struct ContentView: View {
                 Spacer()
             }
         }
-        .padding(18)
+        .padding(14)
         .background(AppSurface.card)
     }
 
@@ -1250,27 +1265,33 @@ struct ProjectDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            detailToolbar
-                .padding(.horizontal, 22)
-                .padding(.vertical, 14)
+        GeometryReader { proxy in
+            let horizontalPadding: CGFloat = proxy.size.width < 720 ? 14 : 22
+            let maxContentWidth: CGFloat = proxy.size.width < 980 ? .infinity : 1280
 
-            Divider()
+            VStack(spacing: 0) {
+                detailToolbar
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, 12)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    allowanceForm
-                    summaryCards
-                    calendarSection
-                    travelSegmentsSection
-                    expensesSection
-                    attachmentsSection
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        header
+                        allowanceForm
+                        summaryCards
+                        calendarSection
+                        travelSegmentsSection
+                        expensesSection
+                        attachmentsSection
+                    }
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: maxContentWidth, alignment: .leading)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 18)
-                .frame(maxWidth: 1280, alignment: .leading)
             }
+            .background(AppSurface.pageBackground)
         }
         .background(AppSurface.pageBackground)
         .alert("操作提示", isPresented: Binding(
@@ -1376,89 +1397,23 @@ struct ProjectDetailView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Button {
-                isIconPickerPresented.toggle()
-            } label: {
-                ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 52)
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "pencil.circle.fill")
-                            .font(.callout)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, project.projectAccent.color)
-                            .background(.background, in: Circle())
-                    }
-            }
-            .buttonStyle(.plain)
-            .help("更换项目图标")
-            .popover(isPresented: $isIconPickerPresented, arrowEdge: .bottom) {
-                ProjectIconPicker(symbol: $project.projectSymbol, accent: $project.projectAccent)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                projectIconEditor
+                projectTitleBlock
+
+                projectTotalBlock(alignment: .trailing)
+                    .frame(width: 190, alignment: .trailing)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 9) {
-                    TextField("项目名称", text: $project.name)
-                        .font(.title2.weight(.semibold))
-                        .textFieldStyle(.plain)
-                        .lineLimit(1)
-                        .frame(maxWidth: 420)
-
-                    Button {
-                        isProjectInfoPresented = true
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .help("编辑项目信息")
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    projectIconEditor
+                    projectTitleBlock
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
-                        headerStatusControls
-                        HeaderMetaPill(icon: "calendar", text: projectPeriodText)
-                        HeaderMetaPill(icon: "person", text: project.traveler.isEmpty ? "未填出差人" : project.traveler)
-                        HeaderMetaPill(icon: "mappin.and.ellipse", text: project.destination.isEmpty ? "未填目的地" : project.destination)
-                        if !project.hasEndDate {
-                            HeaderMetaPill(icon: "clock.arrow.circlepath", text: "进行中")
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        headerStatusControls
-                        HeaderMetaPill(icon: "calendar", text: projectPeriodText)
-                    }
-
-                    HStack(spacing: 8) {
-                        headerStatusControls
-                    }
-                }
+                projectTotalBlock(alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(alignment: .trailing, spacing: 6) {
-                Text("项目合计")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Text(project.totalAmount.formatted(AppFormatters.currency))
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(project.projectAccent.color)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-
-                Button {
-                    store.toggleSettlement(for: project.id)
-                } label: {
-                    Label(project.isSettled ? "取消发放" : "标记已发放", systemImage: project.isSettled ? "arrow.uturn.backward.circle" : "checkmark.circle")
-                }
-                .buttonStyle(.bordered)
-                .tint(project.isSettled ? .gray : .green)
-            }
-            .frame(width: 210, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -1480,6 +1435,94 @@ struct ProjectDetailView: View {
                     .background(AppSurface.card, in: Capsule())
                     .offset(x: 24, y: 16)
             }
+        }
+    }
+
+    private var projectIconEditor: some View {
+        Button {
+            isIconPickerPresented.toggle()
+        } label: {
+            ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 52)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.callout)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, project.projectAccent.color)
+                        .background(.background, in: Circle())
+                }
+        }
+        .buttonStyle(.plain)
+        .help("更换项目图标")
+        .popover(isPresented: $isIconPickerPresented, arrowEdge: .bottom) {
+            ProjectIconPicker(symbol: $project.projectSymbol, accent: $project.projectAccent)
+        }
+    }
+
+    private var projectTitleBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                TextField("项目名称", text: $project.name)
+                    .font(.title2.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .lineLimit(1)
+                    .frame(maxWidth: 420)
+
+                Button {
+                    isProjectInfoPresented = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("编辑项目信息")
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    headerStatusControls
+                    HeaderMetaPill(icon: "calendar", text: projectPeriodText)
+                    HeaderMetaPill(icon: "person", text: project.traveler.isEmpty ? "未填出差人" : project.traveler)
+                    HeaderMetaPill(icon: "mappin.and.ellipse", text: project.destination.isEmpty ? "未填目的地" : project.destination)
+                    if !project.hasEndDate {
+                        HeaderMetaPill(icon: "clock.arrow.circlepath", text: "进行中")
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    headerStatusControls
+                    HeaderMetaPill(icon: "calendar", text: projectPeriodText)
+                }
+
+                HStack(spacing: 8) {
+                    headerStatusControls
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func projectTotalBlock(alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 6) {
+            Text("项目合计")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(project.totalAmount.formatted(AppFormatters.currency))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(project.projectAccent.color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+
+            Button {
+                store.toggleSettlement(for: project.id)
+            } label: {
+                Label(project.isSettled ? "取消发放" : "标记已发放", systemImage: project.isSettled ? "arrow.uturn.backward.circle" : "checkmark.circle")
+            }
+            .buttonStyle(.bordered)
+            .tint(project.isSettled ? .gray : .green)
         }
     }
 
@@ -1565,62 +1608,22 @@ struct ProjectDetailView: View {
 
     private var allowanceForm: some View {
         Panel(title: "出差时间与补助", systemImage: "clock", accent: .green) {
-            HStack(alignment: .top, spacing: 20) {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 14) {
-                        AllowanceDateControl(
-                            title: "开始时间",
-                            icon: "arrow.up.right.circle",
-                            selection: $project.startDate,
-                            isActive: true,
-                            inactiveText: "",
-                            accent: .green
-                        )
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 18) {
+                    allowanceInputs
 
-                        AllowanceDateControl(
-                            title: "结束时间",
-                            icon: "flag.checkered",
-                            selection: $project.endDate,
-                            isActive: project.hasEndDate,
-                            inactiveText: "按今天动态计算",
-                            accent: .green
-                        )
-                    }
+                    Divider()
+                        .frame(height: 132)
 
-                    HStack(alignment: .top, spacing: 14) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("补助标准")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-
-                            HStack(spacing: 8) {
-                                DecimalTextField("例如 100", value: $project.allowanceRate)
-                                    .frame(width: 160)
-                                Text("元/天")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        Spacer(minLength: 12)
-
-                        Toggle("设置结束时间", isOn: $project.hasEndDate)
-                            .toggleStyle(.switch)
-                            .font(.callout.weight(.medium))
-                    }
+                    allowanceSummaryBlock
+                        .frame(width: 260)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Divider()
-                    .frame(height: 138)
-
-                AllowanceSummary(
-                    days: String(format: "%.1f 天", project.calculatedTravelDays),
-                    rate: project.allowanceRate.formatted(AppFormatters.currency),
-                    amount: project.allowanceAmount.formatted(AppFormatters.currency),
-                    accent: project.projectAccent.color
-                )
-                .frame(width: 300)
+                VStack(alignment: .leading, spacing: 14) {
+                    allowanceInputs
+                    allowanceSummaryBlock
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         .onChange(of: project.hasEndDate) { _, isEnabled in
@@ -1633,6 +1636,96 @@ struct ProjectDetailView: View {
                 project.endDate = Calendar.current.date(byAdding: .hour, value: 9, to: newStartDate) ?? newStartDate
             }
         }
+    }
+
+    private var allowanceInputs: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            allowanceDateControls
+            allowanceRateControls
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var allowanceDateControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 14) {
+                startDateControl
+                endDateControl
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                startDateControl
+                endDateControl
+            }
+        }
+    }
+
+    private var startDateControl: some View {
+        AllowanceDateControl(
+            title: "开始时间",
+            icon: "arrow.up.right.circle",
+            selection: $project.startDate,
+            isActive: true,
+            inactiveText: "",
+            accent: .green
+        )
+    }
+
+    private var endDateControl: some View {
+        AllowanceDateControl(
+            title: "结束时间",
+            icon: "flag.checkered",
+            selection: $project.endDate,
+            isActive: project.hasEndDate,
+            inactiveText: "按今天动态计算",
+            accent: .green
+        )
+    }
+
+    private var allowanceRateControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 14) {
+                allowanceRateField
+                Spacer(minLength: 12)
+                endDateToggle
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                allowanceRateField
+                endDateToggle
+            }
+        }
+    }
+
+    private var allowanceRateField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("补助标准")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                DecimalTextField("例如 100", value: $project.allowanceRate)
+                    .frame(width: 160)
+                Text("元/天")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var endDateToggle: some View {
+        Toggle("设置结束时间", isOn: $project.hasEndDate)
+            .toggleStyle(.switch)
+            .font(.callout.weight(.medium))
+    }
+
+    private var allowanceSummaryBlock: some View {
+        AllowanceSummary(
+            days: String(format: "%.1f 天", project.calculatedTravelDays),
+            rate: project.allowanceRate.formatted(AppFormatters.currency),
+            amount: project.allowanceAmount.formatted(AppFormatters.currency),
+            accent: project.projectAccent.color
+        )
     }
 
     private var expensesSection: some View {
