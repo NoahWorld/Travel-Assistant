@@ -56,7 +56,7 @@ struct ContentView: View {
     @State private var listFilter: ProjectListFilter = .all
     @State private var isSettingsPresented = false
     @State private var isGlobalCalendarPresented = false
-    @State private var isSidebarCollapsed = false
+    @AppStorage("travelExpenseDesk.sidebarCollapsed") private var isSidebarCollapsed = false
     @State private var selectedSection: WorkbenchSection = .projects
 
     private var filteredProjects: [ReimbursementProject] {
@@ -159,38 +159,42 @@ struct ContentView: View {
     }
 
     private var navigationSidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
+                Text("差旅报销助手")
+                    .font(.headline.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                Spacer(minLength: 4)
+
                 Button {
                     isSidebarCollapsed = true
                 } label: {
                     Image(systemName: "sidebar.leading")
-                        .font(.headline)
-                        .frame(width: 32, height: 32)
+                        .font(.callout.weight(.semibold))
+                        .frame(width: 30, height: 30)
                 }
                 .buttonStyle(.plain)
                 .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
                 .help("收起侧栏")
-
-                Text("差旅报销助手")
-                    .font(.headline.bold())
-                    .lineLimit(1)
             }
-            .padding(.top, 6)
+            .padding(.top, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 SidebarNavButton(title: "概览", icon: "briefcase.fill", isSelected: false) {
                     isGlobalCalendarPresented = true
                 }
 
-                SidebarNavSection(title: "报销管理") {
+                SidebarNavSection(title: "管理") {
                     SidebarNavButton(title: "项目报销", icon: "briefcase.fill", isSelected: selectedSection == .projects) {
                         selectedSection = .projects
                     }
                 }
 
-                SidebarNavSection(title: "基础数据") {
+                SidebarNavSection(title: "数据") {
                     SidebarNavButton(title: "报销标准", icon: "list.clipboard", isSelected: selectedSection == .standards) {
                         selectedSection = .standards
                     }
@@ -209,6 +213,8 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Label(store.appAppearanceMode.title, systemImage: store.appAppearanceMode.icon)
                     .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                     .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
@@ -218,26 +224,29 @@ struct ContentView: View {
                 Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0")")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
-        .padding(18)
-        .frame(width: 220)
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
+        .padding(.vertical, 16)
+        .frame(width: 176)
         .background(AppSurface.sidebar)
     }
 
     private var collapsedNavigationRail: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             Button {
                 isSidebarCollapsed = false
             } label: {
                 Image(systemName: "sidebar.leading")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: 42, height: 42)
+                    .font(.headline.weight(.semibold))
+                    .frame(width: 40, height: 38)
             }
             .buttonStyle(.plain)
-            .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 10))
+            .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(AppSurface.hairline)
             )
             .help("展开侧栏")
@@ -245,77 +254,49 @@ struct ContentView: View {
             Image(systemName: "creditcard.viewfinder")
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(store.appThemeAccent.color)
-                .frame(width: 42, height: 42)
-                .background(store.appThemeAccent.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-                .help("差旅报销")
-
-            Text("差旅")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
+                .frame(width: 40, height: 40)
+                .background(store.appThemeAccent.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                .help("差旅报销助手")
 
             Divider()
 
-            VStack(spacing: 10) {
-                ForEach(filteredProjects.prefix(8)) { project in
-                    Button {
-                        store.selectedProjectID = project.id
-                    } label: {
-                        ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 38)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 9)
-                                    .stroke(store.selectedProjectID == project.id ? project.projectAccent.color.opacity(0.65) : Color.clear, lineWidth: 2)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(project.name)
+            VStack(spacing: 8) {
+                SidebarRailButton(icon: "briefcase.fill", isSelected: false, help: "概览") {
+                    isGlobalCalendarPresented = true
+                }
+
+                SidebarRailButton(icon: "folder.fill", isSelected: selectedSection == .projects, help: "项目报销") {
+                    selectedSection = .projects
+                }
+
+                SidebarRailButton(icon: "list.clipboard", isSelected: selectedSection == .standards, help: "报销标准") {
+                    selectedSection = .standards
                 }
             }
 
             Spacer()
 
             VStack(spacing: 8) {
-                Button {
+                SidebarRailButton(icon: "plus", isSelected: false, help: "新建报销单") {
                     store.createProject()
-                } label: {
-                    Image(systemName: "plus")
-                        .frame(width: 36, height: 30)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(store.appThemeAccent.color)
-                .help("新建")
-
-                Button(role: .destructive) {
-                    store.requestDeleteSelectedProject()
-                } label: {
-                    Image(systemName: "trash")
-                        .frame(width: 36, height: 30)
-                }
-                .buttonStyle(.bordered)
-                .disabled(store.selectedProjectID == nil)
-                .help("删除")
-
-                Button {
-                    isGlobalCalendarPresented = true
-                } label: {
-                    Image(systemName: "calendar")
-                        .frame(width: 36, height: 30)
-                }
-                .buttonStyle(.bordered)
-                .help("全日历")
 
                 Button {
                     isSettingsPresented = true
                 } label: {
                     Image(systemName: "gearshape")
-                        .frame(width: 36, height: 30)
+                        .font(.callout.weight(.semibold))
+                        .frame(width: 40, height: 36)
                 }
-                .buttonStyle(.bordered)
-                .help("设置")
+                .buttonStyle(.plain)
+                .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+                .help("系统设置")
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 16)
-        .frame(width: 78)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 14)
+        .frame(width: 64)
         .background(AppSurface.sidebar)
     }
 
@@ -483,12 +464,41 @@ private struct SidebarNavButton: View {
             .foregroundStyle(isSelected ? Color.accentColor : .primary)
             .padding(.horizontal, 11)
             .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.accentColor.opacity(0.10) : Color.clear)
             )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct SidebarRailButton: View {
+    let icon: String
+    let isSelected: Bool
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.callout.weight(.semibold))
+                .frame(width: 40, height: 36)
+                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 
