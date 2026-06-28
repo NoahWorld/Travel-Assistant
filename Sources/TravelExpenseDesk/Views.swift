@@ -161,12 +161,7 @@ struct ContentView: View {
     private var navigationSidebar: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Text("差旅报销助手")
-                    .font(.headline.bold())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-
-                Spacer(minLength: 4)
+                Spacer()
 
                 Button {
                     isSidebarCollapsed = true
@@ -227,10 +222,11 @@ struct ContentView: View {
                     .lineLimit(1)
             }
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 10)
+        .frame(width: 138, alignment: .leading)
+        .padding(.leading, 30)
+        .padding(.trailing, 8)
         .padding(.vertical, 16)
-        .frame(width: 176)
+        .frame(width: 176, alignment: .leading)
         .background(AppSurface.sidebar)
     }
 
@@ -294,7 +290,8 @@ struct ContentView: View {
                 .help("系统设置")
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 18)
+        .padding(.trailing, 6)
         .padding(.vertical, 14)
         .frame(width: 64)
         .background(AppSurface.sidebar)
