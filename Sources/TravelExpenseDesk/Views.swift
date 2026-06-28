@@ -13,8 +13,10 @@ private enum ProjectListFilter: String, CaseIterable, Identifiable {
 }
 
 private enum WorkbenchSection {
+    case overview
     case projects
     case standards
+    case settings
 }
 
 private enum AppSurface {
@@ -54,10 +56,8 @@ struct ContentView: View {
     @EnvironmentObject private var store: ProjectStore
     @State private var searchText = ""
     @State private var listFilter: ProjectListFilter = .all
-    @State private var isSettingsPresented = false
-    @State private var isGlobalCalendarPresented = false
     @AppStorage("travelExpenseDesk.sidebarCollapsed") private var isSidebarCollapsed = false
-    @State private var selectedSection: WorkbenchSection = .projects
+    @State private var selectedSection: WorkbenchSection = .overview
 
     private var filteredProjects: [ReimbursementProject] {
         let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -130,21 +130,24 @@ struct ContentView: View {
         } message: {
             Text("删除后会移除该项目记录和已导入的附件文件。")
         }
-        .sheet(isPresented: $isSettingsPresented) {
-            AppSettingsView(
-                appearanceMode: $store.appAppearanceMode,
-                themeAccent: $store.appThemeAccent,
-                showsStageDayInMenuBar: $store.showsStageDayInMenuBar
-            )
-        }
-        .sheet(isPresented: $isGlobalCalendarPresented) {
-            GlobalCalendarView(projects: store.projects)
-        }
     }
 
     @ViewBuilder
     private var detailContent: some View {
         switch selectedSection {
+        case .overview:
+            OverviewDashboardPage(
+                projects: store.projects,
+                accent: store.appThemeAccent.color,
+                onNewProject: {
+                    store.createProject()
+                    selectedSection = .projects
+                },
+                onSelectProject: { projectID in
+                    store.selectedProjectID = projectID
+                    selectedSection = .projects
+                }
+            )
         case .projects:
             if let selectedID = store.selectedProjectID,
                let index = store.projects.firstIndex(where: { $0.id == selectedID }) {
@@ -155,6 +158,12 @@ struct ContentView: View {
             }
         case .standards:
             ReimbursementStandardsPage()
+        case .settings:
+            AppSettingsView(
+                appearanceMode: $store.appAppearanceMode,
+                themeAccent: $store.appThemeAccent,
+                showsStageDayInMenuBar: $store.showsStageDayInMenuBar
+            )
         }
     }
 
@@ -179,8 +188,8 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 16) {
-                SidebarNavButton(title: "概览", icon: "briefcase.fill", isSelected: false) {
-                    isGlobalCalendarPresented = true
+                SidebarNavButton(title: "概览", icon: "chart.bar.xaxis", isSelected: selectedSection == .overview) {
+                    selectedSection = .overview
                 }
 
                 SidebarNavSection(title: "管理") {
@@ -193,12 +202,11 @@ struct ContentView: View {
                     SidebarNavButton(title: "报销标准", icon: "list.clipboard", isSelected: selectedSection == .standards) {
                         selectedSection = .standards
                     }
-                    SidebarNavButton(title: "费用类型", icon: "shippingbox", isSelected: false) {}
                 }
 
                 SidebarNavSection(title: "设置") {
-                    SidebarNavButton(title: "系统设置", icon: "gearshape", isSelected: false) {
-                        isSettingsPresented = true
+                    SidebarNavButton(title: "系统设置", icon: "gearshape", isSelected: selectedSection == .settings) {
+                        selectedSection = .settings
                     }
                 }
             }
@@ -256,8 +264,8 @@ struct ContentView: View {
             Divider()
 
             VStack(spacing: 8) {
-                SidebarRailButton(icon: "briefcase.fill", isSelected: false, help: "概览") {
-                    isGlobalCalendarPresented = true
+                SidebarRailButton(icon: "chart.bar.xaxis", isSelected: selectedSection == .overview, help: "概览") {
+                    selectedSection = .overview
                 }
 
                 SidebarRailButton(icon: "folder.fill", isSelected: selectedSection == .projects, help: "项目报销") {
@@ -274,19 +282,12 @@ struct ContentView: View {
             VStack(spacing: 8) {
                 SidebarRailButton(icon: "plus", isSelected: false, help: "新建报销单") {
                     store.createProject()
+                    selectedSection = .projects
                 }
 
-                Button {
-                    isSettingsPresented = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.callout.weight(.semibold))
-                        .frame(width: 40, height: 36)
+                SidebarRailButton(icon: "gearshape", isSelected: selectedSection == .settings, help: "系统设置") {
+                    selectedSection = .settings
                 }
-                .buttonStyle(.plain)
-                .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
-                .help("系统设置")
             }
         }
         .padding(.leading, 18)
@@ -714,126 +715,677 @@ private struct ProjectListCard: View {
     }
 }
 
-private struct ReimbursementStandardsPage: View {
-    private let columns = [
-        GridItem(.fixed(160), spacing: 10),
-        GridItem(.fixed(112), spacing: 10),
-        GridItem(.fixed(112), spacing: 10),
-        GridItem(.fixed(112), spacing: 10),
-        GridItem(.fixed(112), spacing: 10),
-        GridItem(.fixed(112), spacing: 10),
-        GridItem(.fixed(112), spacing: 10)
-    ]
+private struct OverviewDashboardPage: View {
+    let projects: [ReimbursementProject]
+    let accent: Color
+    let onNewProject: () -> Void
+    let onSelectProject: (ReimbursementProject.ID) -> Void
+
+    private var sortedProjects: [ReimbursementProject] {
+        projects.sorted {
+            if $0.startDate == $1.startDate {
+                return $0.createdAt > $1.createdAt
+            }
+            return $0.startDate > $1.startDate
+        }
+    }
+
+    private var totalAmount: Double {
+        projects.reduce(0) { $0 + $1.totalAmount }
+    }
+
+    private var openProjects: [ReimbursementProject] {
+        projects.filter { $0.status != .disbursed }
+    }
+
+    private var openAmount: Double {
+        openProjects.reduce(0) { $0 + $1.totalAmount }
+    }
+
+    private var disbursedAmount: Double {
+        projects.filter { $0.status == .disbursed }.reduce(0) { $0 + $1.totalAmount }
+    }
+
+    private var reimbursedAmount: Double {
+        projects.filter { $0.status == .reimbursed }.reduce(0) { $0 + $1.totalAmount }
+    }
+
+    private var monthlySummaries: [MonthlyReimbursementSummary] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: projects) { project in
+            let components = calendar.dateComponents([.year, .month], from: project.startDate)
+            return calendar.date(from: components) ?? calendar.startOfDay(for: project.startDate)
+        }
+        return grouped
+            .map { MonthlyReimbursementSummary(month: $0.key, projects: $0.value) }
+            .sorted { $0.month > $1.month }
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 12) {
-                    Image(systemName: "list.clipboard")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.teal)
-                        .frame(width: 40, height: 40)
-                        .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        GeometryReader { proxy in
+            let horizontalPadding: CGFloat = proxy.size.width < 760 ? 14 : 24
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("报销标准")
-                            .font(.title2.bold())
-                        Text("按城市类别和岗位类别展示差旅报销标准。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    summaryGrid
+                    statusBreakdown
+                    historySection
+                    recentProjectsSection
                 }
-
-                StandardsTransportCard()
-
-                standardsTable
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, 22)
+                .frame(maxWidth: 1180, alignment: .leading)
             }
-            .padding(24)
-            .frame(maxWidth: 1050, alignment: .leading)
+            .background(AppSurface.pageBackground)
         }
         .background(AppSurface.pageBackground)
     }
 
-    private var standardsTable: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("住宿 / 饮食 / 交通")
-                .font(.headline)
+    private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                overviewTitle
+                Spacer()
+                Button(action: onNewProject) {
+                    Label("新建报销单", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(accent)
+            }
 
-            ScrollView(.horizontal) {
-                VStack(alignment: .leading, spacing: 10) {
-                    LazyVGrid(columns: columns, spacing: 10) {
-                        StandardsCell("地区", isHeader: true)
-                        ForEach(EmployeeLevel.allCases) { level in
-                            StandardsCell(level.rawValue.replacingOccurrences(of: " ", with: "\n"), isHeader: true)
-                        }
+            VStack(alignment: .leading, spacing: 12) {
+                overviewTitle
+                Button(action: onNewProject) {
+                    Label("新建报销单", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(accent)
+            }
+        }
+    }
 
-                        ForEach(CityTier.allCases) { tier in
-                            StandardsCell(tier.shortTitle, isCity: true)
-                            ForEach(EmployeeLevel.allCases) { level in
-                                StandardsCell(TravelStandard.lodgingText(for: tier, level: level))
-                            }
+    private var overviewTitle: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(accent)
+                .frame(width: 42, height: 42)
+                .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 
-                            StandardsCell("饮食", isSubheader: true)
-                            ForEach(EmployeeLevel.allCases) { level in
-                                StandardsCell(TravelStandard.mealText(for: level))
-                            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("概览")
+                    .font(.title2.bold())
+                Text("按状态、月份和最近项目汇总历史报销情况。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
 
-                            StandardsCell("交通", isSubheader: true)
-                            ForEach(EmployeeLevel.allCases) { level in
-                                StandardsCell(TravelStandard.localTransportText(for: level))
-                            }
+    private var summaryGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+            OverviewMetricCard(
+                title: "历史合计",
+                value: totalAmount.formatted(AppFormatters.currency),
+                footnote: "\(projects.count) 单全部报销记录",
+                icon: "sum",
+                tint: accent
+            )
+            OverviewMetricCard(
+                title: "待处理金额",
+                value: openAmount.formatted(AppFormatters.currency),
+                footnote: "\(openProjects.count) 单待报销/已报销未发放",
+                icon: "clock.badge.exclamationmark",
+                tint: .orange
+            )
+            OverviewMetricCard(
+                title: "已报销金额",
+                value: reimbursedAmount.formatted(AppFormatters.currency),
+                footnote: "\(projects.filter { $0.status == .reimbursed }.count) 单已报销",
+                icon: "doc.text.fill",
+                tint: .blue
+            )
+            OverviewMetricCard(
+                title: "已发放金额",
+                value: disbursedAmount.formatted(AppFormatters.currency),
+                footnote: "\(projects.filter { $0.status == .disbursed }.count) 单已闭环",
+                icon: "checkmark.seal.fill",
+                tint: .green
+            )
+        }
+    }
+
+    private var statusBreakdown: some View {
+        Panel(title: "状态分布", systemImage: "chart.pie.fill", accent: accent) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
+                ForEach(ProjectStatus.allCases) { status in
+                    let statusProjects = projects.filter { $0.status == status }
+                    let statusAmount = statusProjects.reduce(0) { $0 + $1.totalAmount }
+                    OverviewStatusCard(
+                        status: status,
+                        count: statusProjects.count,
+                        amount: statusAmount
+                    )
+                }
+            }
+        }
+    }
+
+    private var historySection: some View {
+        Panel(title: "月份历史", systemImage: "clock.arrow.circlepath", accent: accent) {
+            if monthlySummaries.isEmpty {
+                ContentUnavailableView(
+                    "暂无历史报销",
+                    systemImage: "tray",
+                    description: Text("新建报销单后，这里会按月份自动汇总。")
+                )
+                .frame(maxWidth: .infinity, minHeight: 180)
+            } else {
+                let maxAmount = max(monthlySummaries.map(\.totalAmount).max() ?? 1, 1)
+                VStack(spacing: 10) {
+                    ForEach(monthlySummaries) { summary in
+                        OverviewMonthRow(summary: summary, maxAmount: maxAmount)
+                    }
+                }
+            }
+        }
+    }
+
+    private var recentProjectsSection: some View {
+        Panel(title: "最近报销单", systemImage: "list.bullet.rectangle", accent: accent) {
+            if sortedProjects.isEmpty {
+                ContentUnavailableView(
+                    "暂无报销单",
+                    systemImage: "doc.badge.plus",
+                    description: Text("点击右上角新建第一张报销单。")
+                )
+                .frame(maxWidth: .infinity, minHeight: 160)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(sortedProjects.prefix(6)) { project in
+                        OverviewProjectRow(project: project) {
+                            onSelectProject(project.id)
                         }
                     }
                 }
-                .padding(14)
-                .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppSurface.hairline))
             }
         }
     }
 }
 
-private struct StandardsCell: View {
-    let text: String
-    var isHeader = false
-    var isCity = false
-    var isSubheader = false
+private struct OverviewMetricCard: View {
+    let title: String
+    let value: String
+    let footnote: String
+    let icon: String
+    let tint: Color
 
-    init(_ text: String, isHeader: Bool = false, isCity: Bool = false, isSubheader: Bool = false) {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 32, height: 32)
+                    .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 7))
+                Spacer()
+            }
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title3.bold())
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.70)
+            Text(footnote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(15)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+    }
+}
+
+private struct OverviewStatusCard: View {
+    let status: ProjectStatus
+    let count: Int
+    let amount: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                StatusBadge(status: status)
+                Spacer()
+                Text("\(count) 单")
+                    .font(.callout.bold())
+                    .foregroundStyle(status.overviewTint)
+            }
+
+            Text(amount.formatted(AppFormatters.currency))
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(status.overviewTint.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(status.overviewTint.opacity(0.18)))
+    }
+}
+
+private struct MonthlyReimbursementSummary: Identifiable {
+    let month: Date
+    let projects: [ReimbursementProject]
+
+    var id: Date { month }
+    var totalAmount: Double { projects.reduce(0) { $0 + $1.totalAmount } }
+    var pendingCount: Int { projects.filter { $0.status == .pending }.count }
+    var reimbursedCount: Int { projects.filter { $0.status == .reimbursed }.count }
+    var disbursedCount: Int { projects.filter { $0.status == .disbursed }.count }
+
+    var monthTitle: String {
+        month.formatted(.dateTime.year().month())
+    }
+}
+
+private struct OverviewMonthRow: View {
+    let summary: MonthlyReimbursementSummary
+    let maxAmount: Double
+
+    var body: some View {
+        let ratio = maxAmount > 0 ? summary.totalAmount / maxAmount : 0
+
+        VStack(alignment: .leading, spacing: 9) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    monthTitle
+                    Spacer()
+                    amountText
+                    statusCounts
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        monthTitle
+                        Spacer()
+                        amountText
+                    }
+                    statusCounts
+                }
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(AppSurface.cardSubtle)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.blue.opacity(0.62))
+                        .frame(width: max(8, proxy.size.width * CGFloat(ratio)))
+                }
+            }
+            .frame(height: 8)
+        }
+        .padding(12)
+        .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+    }
+
+    private var monthTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(summary.monthTitle)
+                .font(.callout.bold())
+            Text("\(summary.projects.count) 单")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var amountText: some View {
+        Text(summary.totalAmount.formatted(AppFormatters.currency))
+            .font(.headline.weight(.semibold))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+    }
+
+    private var statusCounts: some View {
+        HStack(spacing: 8) {
+            OverviewStatusCount(title: "待", count: summary.pendingCount, tint: .orange)
+            OverviewStatusCount(title: "报", count: summary.reimbursedCount, tint: .blue)
+            OverviewStatusCount(title: "发", count: summary.disbursedCount, tint: .green)
+        }
+    }
+}
+
+private struct OverviewStatusCount: View {
+    let title: String
+    let count: Int
+    let tint: Color
+
+    var body: some View {
+        Text("\(title) \(count)")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.12), in: Capsule())
+    }
+}
+
+private struct OverviewProjectRow: View {
+    let project: ReimbursementProject
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 38)
+                    projectInfo
+                    Spacer()
+                    Text(project.totalAmount.formatted(AppFormatters.currency))
+                        .font(.headline.weight(.semibold))
+                        .monospacedDigit()
+                    StatusBadge(status: project.status)
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    ProjectIconBadge(symbol: project.projectSymbol, accent: project.projectAccent, size: 38)
+                    VStack(alignment: .leading, spacing: 8) {
+                        projectInfo
+                        HStack {
+                            Text(project.totalAmount.formatted(AppFormatters.currency))
+                                .font(.headline.weight(.semibold))
+                                .monospacedDigit()
+                            Spacer()
+                            StatusBadge(status: project.status)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var projectInfo: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(project.name)
+                .font(.callout.bold())
+                .lineLimit(1)
+            Text(projectSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private var projectSummary: String {
+        let destination = project.destination.isEmpty ? "未填目的地" : project.destination
+        let start = project.startDate.formatted(AppFormatters.date)
+        if project.hasEndDate {
+            return "\(destination) · \(start) - \(project.endDate.formatted(AppFormatters.date))"
+        }
+        return "\(destination) · \(start) - 至今"
+    }
+}
+
+private extension ProjectStatus {
+    var overviewTint: Color {
+        switch self {
+        case .pending:
+            return .orange
+        case .reimbursed:
+            return .blue
+        case .disbursed:
+            return .green
+        }
+    }
+}
+
+private struct ReimbursementStandardsPage: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let horizontalPadding: CGFloat = proxy.size.width < 760 ? 14 : 24
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    employeeLevels
+                    rulesSummary
+                    standardsTable
+                }
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, 22)
+                .frame(maxWidth: 1180, alignment: .leading)
+            }
+            .background(AppSurface.pageBackground)
+        }
+        .background(AppSurface.pageBackground)
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "list.clipboard")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.teal)
+                .frame(width: 42, height: 42)
+                .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("报销标准")
+                    .font(.title2.bold())
+                Text("按岗位分类、城市级别和费用项目展示差旅报销标准。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var employeeLevels: some View {
+        Panel(title: "岗位分类", systemImage: "person.3.fill", accent: .teal) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 10)], spacing: 10) {
+                ForEach(EmployeeLevel.allCases) { level in
+                    StandardsLevelCard(level: level)
+                }
+            }
+        }
+    }
+
+    private var rulesSummary: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
+            StandardsRuleCard(
+                title: "远程交通",
+                value: "一至三类：经济舱 / 一等座；四至六类：二等座",
+                icon: "train.side.front.car",
+                tint: .blue
+            )
+            StandardsRuleCard(
+                title: "总经理",
+                value: "住宿、饮食、市内交通按票据据实报销",
+                icon: "person.crop.circle.badge.checkmark",
+                tint: .purple
+            )
+            StandardsRuleCard(
+                title: "补助口径",
+                value: "饮食和市内交通为 50 元/天，按出差天数统计",
+                icon: "yensign.circle.fill",
+                tint: .green
+            )
+        }
+    }
+
+    private var standardsTable: some View {
+        Panel(title: "标准明细", systemImage: "tablecells", accent: .teal) {
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 0) {
+                    StandardsMatrixHeader()
+                    ForEach(CityTier.allCases) { tier in
+                        VStack(alignment: .leading, spacing: 0) {
+                            StandardsMatrixRow(
+                                region: tier.tableTitle,
+                                item: "远程交通费",
+                                values: EmployeeLevel.allCases.map { TravelStandard.longDistanceTransportText(for: $0) },
+                                highlightsRegion: true
+                            )
+                            StandardsMatrixRow(
+                                region: tier.tableTitle,
+                                item: "住宿",
+                                values: EmployeeLevel.allCases.map { TravelStandard.lodgingText(for: tier, level: $0) }
+                            )
+                            StandardsMatrixRow(
+                                region: tier.tableTitle,
+                                item: "饮食",
+                                values: EmployeeLevel.allCases.map { TravelStandard.mealText(for: $0) }
+                            )
+                            StandardsMatrixRow(
+                                region: tier.tableTitle,
+                                item: "交通",
+                                values: EmployeeLevel.allCases.map { TravelStandard.localTransportText(for: $0) }
+                            )
+                        }
+                    }
+                }
+                .padding(1)
+            }
+        }
+    }
+}
+
+private struct StandardsLevelCard: View {
+    let level: EmployeeLevel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(level.classTitle)
+                .font(.caption.bold())
+                .foregroundStyle(.teal)
+            Text(level.roleTitle)
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.80)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.teal.opacity(0.18)))
+    }
+}
+
+private struct StandardsRuleCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.callout.bold())
+                Text(value)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+    }
+}
+
+private struct StandardsMatrixHeader: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            StandardsTableCell("地区", width: 150, isHeader: true)
+            StandardsTableCell("项目", width: 104, isHeader: true)
+            ForEach(EmployeeLevel.allCases) { level in
+                StandardsTableCell(level.shortTableTitle, width: 138, isHeader: true)
+            }
+        }
+    }
+}
+
+private struct StandardsMatrixRow: View {
+    let region: String
+    let item: String
+    let values: [String]
+    var highlightsRegion = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            StandardsTableCell(region, width: 150, isRegion: highlightsRegion)
+            StandardsTableCell(item, width: 104, isItem: true)
+            ForEach(Array(values.enumerated()), id: \.offset) { _, value in
+                StandardsTableCell(value, width: 138)
+            }
+        }
+    }
+}
+
+private struct StandardsTableCell: View {
+    let text: String
+    let width: CGFloat
+    var isHeader = false
+    var isRegion = false
+    var isItem = false
+
+    init(_ text: String, width: CGFloat, isHeader: Bool = false, isRegion: Bool = false, isItem: Bool = false) {
         self.text = text
+        self.width = width
         self.isHeader = isHeader
-        self.isCity = isCity
-        self.isSubheader = isSubheader
+        self.isRegion = isRegion
+        self.isItem = isItem
     }
 
     var body: some View {
         Text(text)
-            .font(isHeader || isCity ? .callout.bold() : .callout)
-            .foregroundStyle(isHeader || isSubheader ? .secondary : .primary)
+            .font(isHeader || isItem ? .callout.bold() : .callout)
+            .foregroundStyle(isHeader || isItem ? .secondary : .primary)
             .multilineTextAlignment(.center)
             .lineLimit(3)
-            .minimumScaleFactor(0.76)
-            .frame(maxWidth: .infinity, minHeight: isHeader ? 54 : 44)
+            .minimumScaleFactor(0.72)
+            .frame(width: width)
+            .frame(minHeight: isHeader ? 58 : 50)
             .padding(.horizontal, 8)
-            .background(cellBackground, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+            .background(background)
+            .border(AppSurface.hairline)
     }
 
-    private var cellBackground: Color {
+    private var background: Color {
         if isHeader { return AppSurface.cardSubtle }
-        if isCity { return Color.teal.opacity(0.09) }
-        if isSubheader { return AppSurface.cardSubtle }
+        if isRegion { return Color.teal.opacity(0.09) }
+        if isItem { return AppSurface.cardSubtle }
         return AppSurface.card
     }
 }
 
 private extension CityTier {
-    var shortTitle: String {
+    var tableTitle: String {
         switch self {
         case .firstTier:
-            return "北京、上海\n广州、深圳\n天津、重庆"
+            return "北京/上海/广州/深圳/天津/重庆"
         case .provincialCapital:
-            return "省会城市\n含青岛、厦门、苏州"
+            return "省会城市（含青岛/厦门/苏州）"
         case .prefecture:
             return "地级市"
         case .county:
@@ -842,62 +1394,18 @@ private extension CityTier {
     }
 }
 
-private struct StandardsTransportCard: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("远程交通费")
-                .font(.headline)
-
-            HStack(spacing: 12) {
-                StandardsTransportItem(
-                    title: "一类至三类",
-                    subtitle: "总经理 / 副总经理 / 部门负责人",
-                    value: "飞机票经济舱 / 动车、高铁一等座",
-                    tint: .blue
-                )
-                StandardsTransportItem(
-                    title: "四类至六类",
-                    subtitle: "商务及主管 / 技术售前 / 技术售中",
-                    value: "动车、高铁等二等座",
-                    tint: .orange
-                )
-            }
-        }
-        .padding(16)
-        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppSurface.hairline))
+private extension EmployeeLevel {
+    var classTitle: String {
+        rawValue.components(separatedBy: " ").first ?? rawValue
     }
-}
 
-private struct StandardsTransportItem: View {
-    let title: String
-    let subtitle: String
-    let value: String
-    let tint: Color
+    var roleTitle: String {
+        let parts = rawValue.components(separatedBy: " ")
+        return parts.dropFirst().joined(separator: " ")
+    }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "train.side.front.car")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(tint)
-                .frame(width: 36, height: 36)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.callout.bold())
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(value)
-                    .font(.callout.weight(.medium))
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(13)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
+    var shortTableTitle: String {
+        "\(classTitle)\n\(roleTitle)"
     }
 }
 
@@ -905,7 +1413,6 @@ private struct AppSettingsView: View {
     @Binding var appearanceMode: AppAppearanceMode
     @Binding var themeAccent: ProjectAccent
     @Binding var showsStageDayInMenuBar: Bool
-    @Environment(\.dismiss) private var dismiss
 
     private let columns = [
         GridItem(.flexible(), spacing: 10),
@@ -913,113 +1420,101 @@ private struct AppSettingsView: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 12) {
-                Image(systemName: "gearshape.fill")
-                    .font(.title2)
-                    .foregroundStyle(themeAccent.color)
-                    .frame(width: 38, height: 38)
-                    .background(themeAccent.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        GeometryReader { proxy in
+            let horizontalPadding: CGFloat = proxy.size.width < 760 ? 14 : 24
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("设置")
-                        .font(.title2.bold())
-                    Text("外观模式控制整体明暗；强调色只影响按钮、图标和新建项目默认颜色。")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.title2)
+                            .foregroundStyle(themeAccent.color)
+                            .frame(width: 42, height: 42)
+                            .background(themeAccent.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("外观模式")
-                    .font(.headline)
-
-                VStack(spacing: 8) {
-                    ForEach(AppAppearanceMode.allCases) { mode in
-                        AppearanceModeOption(
-                            mode: mode,
-                            isSelected: appearanceMode == mode,
-                            accent: themeAccent.color
-                        ) {
-                            appearanceMode = mode
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("系统设置")
+                                .font(.title2.bold())
+                            Text("调整外观、强调色和菜单栏显示方式，设置会立即保存。")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                }
-            }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("强调色")
-                    .font(.headline)
-
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(ProjectAccent.allCases) { accent in
-                        ThemeAccentOption(
-                            accent: accent,
-                            isSelected: themeAccent == accent
-                        ) {
-                            themeAccent = accent
+                    Panel(title: "外观模式", systemImage: "circle.lefthalf.filled", accent: themeAccent.color) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 10)], spacing: 10) {
+                            ForEach(AppAppearanceMode.allCases) { mode in
+                                AppearanceModeOption(
+                                    mode: mode,
+                                    isSelected: appearanceMode == mode,
+                                    accent: themeAccent.color
+                                ) {
+                                    appearanceMode = mode
+                                }
+                            }
                         }
                     }
-                }
-            }
 
-            Text("项目图标颜色仍然可以在每个项目头像上单独调整。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                    Panel(title: "强调色", systemImage: "paintpalette.fill", accent: themeAccent.color) {
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(ProjectAccent.allCases) { accent in
+                                ThemeAccentOption(
+                                    accent: accent,
+                                    isSelected: themeAccent == accent
+                                ) {
+                                    themeAccent = accent
+                                }
+                            }
+                        }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("菜单栏")
-                    .font(.headline)
-
-                Toggle(isOn: $showsStageDayInMenuBar) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("显示当前项目第几天")
-                            .font(.callout.bold())
-                        Text("有进行中的项目时，菜单栏图标会显示从开始日期算起的天数；关闭后显示默认图标。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-                .padding(12)
-                .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("关于")
-                    .font(.headline)
-
-                HStack(spacing: 12) {
-                    Image(nsImage: NSApp.applicationIconImage)
-                        .resizable()
-                        .frame(width: 42, height: 42)
-                        .clipShape(RoundedRectangle(cornerRadius: 9))
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "差旅报销助手")
-                            .font(.callout.bold())
-                        Text("版本 \(appVersion)")
+                        Text("项目图标颜色仍然可以在每个项目头像上单独调整。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
-                    Spacer()
-                }
-                .padding(12)
-                .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
-            }
+                    Panel(title: "菜单栏", systemImage: "menubar.rectangle", accent: themeAccent.color) {
+                        Toggle(isOn: $showsStageDayInMenuBar) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("显示当前项目第几天")
+                                    .font(.callout.bold())
+                                Text("有进行中的项目时，菜单栏图标会显示从开始日期算起的天数；关闭后显示默认图标。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .padding(12)
+                        .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
+                    }
 
-            HStack {
-                Spacer()
-                Button("完成") {
-                    dismiss()
+                    Panel(title: "关于", systemImage: "info.circle.fill", accent: themeAccent.color) {
+                        HStack(spacing: 12) {
+                            Image(nsImage: NSApp.applicationIconImage)
+                                .resizable()
+                                .frame(width: 44, height: 44)
+                                .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "差旅报销助手")
+                                    .font(.callout.bold())
+                                Text("版本 \(appVersion)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(AppSurface.cardSubtle, in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
-                .keyboardShortcut(.defaultAction)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, 22)
+                .frame(maxWidth: 920, alignment: .leading)
             }
+            .background(AppSurface.pageBackground)
         }
-        .padding(22)
-        .frame(width: 460)
-        .background(AppSurface.card)
+        .background(AppSurface.pageBackground)
     }
 
     private var appVersion: String {
