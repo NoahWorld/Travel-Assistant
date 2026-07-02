@@ -2750,10 +2750,10 @@ struct ProjectDetailView: View {
     }
 
     private var expensesSection: some View {
-        Panel(title: "费用明细", systemImage: "list.bullet.rectangle", accent: .orange) {
+        Panel(title: "特殊费用", systemImage: "list.bullet.rectangle", accent: .orange) {
             VStack(spacing: 10) {
                 HStack {
-                    Text("可录入住宿费、伙食费等额外票据；行程金额在“行程与票据”中录入并自动计入项目合计。")
+                    Text("默认无需填写。仅在无发票、特殊审批或无法归入行程票据时手动补充；常规票据请在“行程与票据”中导入识别。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -2765,10 +2765,21 @@ struct ProjectDetailView: View {
                 }
 
                 VStack(spacing: 8) {
-                    ExpenseHeader()
-                    ForEach($project.expenses) { $expense in
-                        ExpenseRow(expense: $expense) {
-                            project.expenses.removeAll { $0.id == expense.id }
+                    if project.expenses.isEmpty {
+                        ContentUnavailableView(
+                            "暂无特殊费用",
+                            systemImage: "checkmark.seal",
+                            description: Text("有发票的交通、住宿、打车等项目优先通过“导入发票识别”进入报销统计。")
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                    } else {
+                        ExpenseHeader()
+                        ForEach($project.expenses) { $expense in
+                            ExpenseRow(expense: $expense) {
+                                project.expenses.removeAll { $0.id == expense.id }
+                                project.updatedAt = Date()
+                            }
                         }
                     }
                 }

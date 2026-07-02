@@ -47,6 +47,7 @@ final class ProjectStore: ObservableObject {
 
         load()
         normalizeImportedSegments()
+        normalizeLegacyExpensePlaceholders()
         if projects.isEmpty {
             createProject(select: true)
         } else {
@@ -105,9 +106,6 @@ final class ProjectStore: ObservableObject {
         let month = Calendar.current.component(.month, from: Date())
         var project = ReimbursementProject.blank(named: "\(month)月出差报销")
         project.projectAccent = appThemeAccent
-        project.expenses = [
-            ExpenseLine(category: .transportation, note: "交通票据", amount: 0)
-        ]
         projects.insert(project, at: 0)
         if select {
             selectedProjectID = project.id
@@ -306,6 +304,28 @@ final class ProjectStore: ObservableObject {
         }
 
         return removedCount
+    }
+
+    private func normalizeLegacyExpensePlaceholders() {
+        var removedCount = 0
+        for index in projects.indices {
+            let originalCount = projects[index].expenses.count
+            projects[index].expenses.removeAll { expense in
+                expense.category == .transportation
+                    && expense.note.trimmingCharacters(in: .whitespacesAndNewlines) == "交通票据"
+                    && abs(expense.amount) < 0.005
+            }
+
+            let diff = originalCount - projects[index].expenses.count
+            if diff > 0 {
+                removedCount += diff
+                projects[index].updatedAt = Date()
+            }
+        }
+
+        if removedCount > 0 {
+            save()
+        }
     }
 
     private func finishInvoiceImport(
