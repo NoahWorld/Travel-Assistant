@@ -15,6 +15,7 @@ private enum ProjectListFilter: String, CaseIterable, Identifiable {
 private enum WorkbenchSection {
     case overview
     case projects
+    case audit
     case standards
     case settings
 }
@@ -146,6 +147,9 @@ struct ContentView: View {
                 onSelectProject: { projectID in
                     store.selectedProjectID = projectID
                     selectedSection = .projects
+                },
+                onAudit: {
+                    selectedSection = .audit
                 }
             )
         case .projects:
@@ -155,6 +159,16 @@ struct ContentView: View {
                     .id(selectedID)
             } else {
                 EmptyStateView()
+            }
+        case .audit:
+            ReceiptAuditPage(
+                projects: store.projects,
+                isImportingInvoices: store.isImportingInvoices,
+                selectedProjectID: $store.selectedProjectID,
+                accent: store.appThemeAccent.color
+            ) { projectID in
+                store.selectedProjectID = projectID
+                selectedSection = .projects
             }
         case .standards:
             ReimbursementStandardsPage()
@@ -195,6 +209,10 @@ struct ContentView: View {
                 SidebarNavSection(title: "管理") {
                     SidebarNavButton(title: "项目报销", icon: "briefcase.fill", isSelected: selectedSection == .projects) {
                         selectedSection = .projects
+                    }
+
+                    SidebarNavButton(title: "票据审核", icon: "doc.text.viewfinder", isSelected: selectedSection == .audit) {
+                        selectedSection = .audit
                     }
                 }
 
@@ -272,6 +290,10 @@ struct ContentView: View {
                     selectedSection = .projects
                 }
 
+                SidebarRailButton(icon: "doc.text.viewfinder", isSelected: selectedSection == .audit, help: "票据审核") {
+                    selectedSection = .audit
+                }
+
                 SidebarRailButton(icon: "list.clipboard", isSelected: selectedSection == .standards, help: "报销标准") {
                     selectedSection = .standards
                 }
@@ -309,7 +331,7 @@ struct ContentView: View {
         guard selectedSection == .projects else { return 0 }
         let sidebarWidth: CGFloat = isSidebarCollapsed ? 64 : 152
         let availableWidth = max(totalWidth - sidebarWidth, 0)
-        return min(340, max(292, availableWidth * 0.28))
+        return min(310, max(252, availableWidth * 0.24))
     }
 
     private var projectListColumn: some View {
@@ -720,6 +742,7 @@ private struct OverviewDashboardPage: View {
     let accent: Color
     let onNewProject: () -> Void
     let onSelectProject: (ReimbursementProject.ID) -> Void
+    let onAudit: () -> Void
 
     private var sortedProjects: [ReimbursementProject] {
         projects.sorted {
@@ -787,6 +810,10 @@ private struct OverviewDashboardPage: View {
             HStack(alignment: .center, spacing: 14) {
                 overviewTitle
                 Spacer()
+                Button(action: onAudit) {
+                    Label("票据审核", systemImage: "doc.text.viewfinder")
+                }
+                .buttonStyle(.bordered)
                 Button(action: onNewProject) {
                     Label("新建报销单", systemImage: "plus")
                 }
@@ -796,6 +823,10 @@ private struct OverviewDashboardPage: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 overviewTitle
+                Button(action: onAudit) {
+                    Label("票据审核", systemImage: "doc.text.viewfinder")
+                }
+                .buttonStyle(.bordered)
                 Button(action: onNewProject) {
                     Label("新建报销单", systemImage: "plus")
                 }
@@ -1723,6 +1754,501 @@ private struct EmptyStateView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private enum ReceiptAuditStatus: String, CaseIterable, Identifiable {
+    case needsReview = "待核对"
+    case unrecognized = "未识别"
+    case duplicate = "疑似重复"
+    case confirmed = "已确认"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .needsReview:
+            return "exclamationmark.circle.fill"
+        case .unrecognized:
+            return "questionmark.folder.fill"
+        case .duplicate:
+            return "square.on.square"
+        case .confirmed:
+            return "checkmark.seal.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .needsReview:
+            return .orange
+        case .unrecognized:
+            return .red
+        case .duplicate:
+            return .purple
+        case .confirmed:
+            return .green
+        }
+    }
+}
+
+private enum ReceiptAuditFilter: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case needsReview = "待核对"
+    case issues = "异常"
+    case confirmed = "已确认"
+
+    var id: String { rawValue }
+}
+
+private struct ReceiptAuditItem: Identifiable, Hashable {
+    let id: UUID
+    let projectID: ReimbursementProject.ID
+    let projectName: String
+    let attachment: AttachmentItem
+    let segment: TravelSegment?
+    let status: ReceiptAuditStatus
+    let duplicateCount: Int
+
+    var amount: Double {
+        segment?.amount ?? 0
+    }
+
+    var amountText: String {
+        amount > 0 ? amount.formatted(AppFormatters.currency) : "未识别"
+    }
+
+    var routeText: String {
+        guard let segment else { return "未匹配行程" }
+        return segment.routeText
+    }
+
+    var dateText: String {
+        guard let segment else { return attachment.addedAt.formatted(AppFormatters.shortDateTime) }
+        return segment.departAt.formatted(AppFormatters.shortDateTime)
+    }
+
+    var hasCompleteRoute: Bool {
+        guard let segment else { return false }
+        return !segment.fromPlace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !segment.toPlace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func make(from projects: [ReimbursementProject]) -> [ReceiptAuditItem] {
+        let rawItems = projects.flatMap { project in
+            project.attachments.map { attachment in
+                let segment = project.travelSegments.first { $0.sourceAttachmentID == attachment.id }
+                return ReceiptAuditDraft(project: project, attachment: attachment, segment: segment)
+            }
+        }
+
+        let duplicateCounts = Dictionary(grouping: rawItems.compactMap(\.duplicateKey), by: { $0 })
+            .mapValues(\.count)
+
+        return rawItems
+            .map { draft in
+                let duplicateCount = draft.duplicateKey.map { duplicateCounts[$0] ?? 1 } ?? 1
+                let status: ReceiptAuditStatus
+                if duplicateCount > 1 {
+                    status = .duplicate
+                } else if draft.segment == nil {
+                    status = .unrecognized
+                } else if draft.segment?.amount ?? 0 <= 0 || !draft.hasCompleteRoute {
+                    status = .needsReview
+                } else {
+                    status = .confirmed
+                }
+
+                return ReceiptAuditItem(
+                    id: draft.attachment.id,
+                    projectID: draft.project.id,
+                    projectName: draft.project.name,
+                    attachment: draft.attachment,
+                    segment: draft.segment,
+                    status: status,
+                    duplicateCount: duplicateCount
+                )
+            }
+            .sorted {
+                if $0.status == $1.status {
+                    return $0.attachment.addedAt > $1.attachment.addedAt
+                }
+                return $0.status.sortPriority < $1.status.sortPriority
+            }
+    }
+}
+
+private struct ReceiptAuditDraft {
+    let project: ReimbursementProject
+    let attachment: AttachmentItem
+    let segment: TravelSegment?
+
+    var hasCompleteRoute: Bool {
+        guard let segment else { return false }
+        return !segment.fromPlace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !segment.toPlace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var duplicateKey: String? {
+        guard let segment, segment.amount > 0 else { return nil }
+        let day = Calendar.current.startOfDay(for: segment.departAt).timeIntervalSinceReferenceDate
+        let from = segment.fromPlace.trimmingCharacters(in: .whitespacesAndNewlines)
+        let to = segment.toPlace.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(Int(day))|\(Int((segment.amount * 100).rounded()))|\(from)|\(to)|\(segment.transportMode.rawValue)"
+    }
+}
+
+private extension ReceiptAuditStatus {
+    var sortPriority: Int {
+        switch self {
+        case .needsReview:
+            return 0
+        case .unrecognized:
+            return 1
+        case .duplicate:
+            return 2
+        case .confirmed:
+            return 3
+        }
+    }
+}
+
+private struct ReceiptAuditPage: View {
+    let projects: [ReimbursementProject]
+    let isImportingInvoices: Bool
+    @Binding var selectedProjectID: ReimbursementProject.ID?
+    let accent: Color
+    let onOpenProject: (ReimbursementProject.ID) -> Void
+
+    @State private var selectedReceiptID: UUID?
+    @State private var filter: ReceiptAuditFilter = .all
+
+    private var allItems: [ReceiptAuditItem] {
+        ReceiptAuditItem.make(from: projects)
+    }
+
+    private var filteredItems: [ReceiptAuditItem] {
+        switch filter {
+        case .all:
+            return allItems
+        case .needsReview:
+            return allItems.filter { $0.status == .needsReview }
+        case .issues:
+            return allItems.filter { $0.status == .unrecognized || $0.status == .duplicate }
+        case .confirmed:
+            return allItems.filter { $0.status == .confirmed }
+        }
+    }
+
+    private var selectedItem: ReceiptAuditItem? {
+        if let selectedReceiptID,
+           let item = filteredItems.first(where: { $0.id == selectedReceiptID }) {
+            return item
+        }
+        return filteredItems.first
+    }
+
+    private var pendingCount: Int {
+        allItems.filter { $0.status != .confirmed }.count
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let isCompact = proxy.size.width < 840
+            let sideWidth = min(340, max(270, proxy.size.width * 0.28))
+            let inspectorWidth = min(380, max(300, proxy.size.width * 0.30))
+
+            Group {
+                if isCompact {
+                    VStack(spacing: 0) {
+                        queueColumn
+                            .frame(maxHeight: 260)
+                        Divider()
+                        previewPane
+                        Divider()
+                        inspectorPane
+                            .frame(maxHeight: 320)
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        queueColumn
+                            .frame(width: sideWidth)
+                        Divider()
+                        previewPane
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        Divider()
+                        inspectorPane
+                            .frame(width: inspectorWidth)
+                    }
+                }
+            }
+            .background(AppSurface.pageBackground)
+        }
+    }
+
+    private var queueColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.text.viewfinder")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(accent)
+                    .frame(width: 38, height: 38)
+                    .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("票据审核")
+                        .font(.title3.bold())
+                    Text("\(allItems.count) 张票据，\(pendingCount) 张待处理")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if isImportingInvoices {
+                    ProgressView()
+                        .controlSize(.small)
+                        .help("正在后台识别发票")
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    ForEach(ReceiptAuditFilter.allCases) { option in
+                        FilterChip(title: option.rawValue, isSelected: filter == option, accent: accent) {
+                            filter = option
+                        }
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+
+            if filteredItems.isEmpty {
+                ContentUnavailableView(
+                    "没有票据",
+                    systemImage: "tray",
+                    description: Text("导入发票后会进入这里审核。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filteredItems) { item in
+                            ReceiptAuditRow(
+                                item: item,
+                                isSelected: selectedItem?.id == item.id,
+                                accent: accent
+                            ) {
+                                selectedReceiptID = item.id
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(16)
+        .background(AppSurface.sidebar)
+    }
+
+    @ViewBuilder
+    private var previewPane: some View {
+        if let item = selectedItem {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    ReceiptStatusBadge(status: item.status)
+                    Text(item.attachment.fileName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Text(item.attachment.kind.rawValue)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                AttachmentPreview(attachment: item.attachment)
+                    .id(item.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppSurface.hairline))
+            }
+            .padding(18)
+        } else {
+            ContentUnavailableView(
+                "选择一张票据",
+                systemImage: "doc.text.magnifyingglass",
+                description: Text("左侧列表用于查看未识别、待核对和重复票据。")
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var inspectorPane: some View {
+        if let item = selectedItem {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Panel(title: "识别结果", systemImage: item.status.icon, accent: item.status.tint) {
+                        VStack(spacing: 10) {
+                            ReceiptAuditDetailRow(title: "状态", value: item.status.rawValue)
+                            ReceiptAuditDetailRow(title: "金额", value: item.amountText, isEmphasized: item.amount > 0)
+                            ReceiptAuditDetailRow(title: "出行时间", value: item.dateText)
+                            ReceiptAuditDetailRow(title: "路线", value: item.routeText)
+
+                            if let segment = item.segment {
+                                ReceiptAuditDetailRow(title: "方式", value: segment.transportMode.rawValue)
+                                ReceiptAuditDetailRow(title: "报销", value: segment.reimbursementDirection.rawValue)
+                            }
+
+                            if item.status == .duplicate {
+                                ReceiptAuditDetailRow(title: "重复", value: "同金额/日期/路线 \(item.duplicateCount) 张")
+                            }
+                        }
+                    }
+
+                    Panel(title: "所属报销单", systemImage: "briefcase.fill", accent: accent) {
+                        VStack(alignment: .leading, spacing: 11) {
+                            Text(item.projectName)
+                                .font(.headline)
+                                .lineLimit(2)
+
+                            Text("文件名只用于展示，不参与金额和行程识别。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 8) {
+                                Button {
+                                    selectedProjectID = item.projectID
+                                    onOpenProject(item.projectID)
+                                } label: {
+                                    Label("打开报销单", systemImage: "arrow.right.circle")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(accent)
+
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([
+                                        URL(fileURLWithPath: item.attachment.storedPath)
+                                    ])
+                                } label: {
+                                    Image(systemName: "folder")
+                                        .frame(width: 24, height: 24)
+                                }
+                                .buttonStyle(.bordered)
+                                .help("在访达中显示")
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .background(AppSurface.pageBackground)
+        } else {
+            Color.clear
+        }
+    }
+}
+
+private struct ReceiptAuditRow: View {
+    let item: ReceiptAuditItem
+    let isSelected: Bool
+    let accent: Color
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: fileIcon)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(item.status.tint)
+                    .frame(width: 30, height: 30)
+                    .background(item.status.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 7) {
+                        Text(item.attachment.fileName)
+                            .font(.callout.bold())
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                    }
+
+                    Text(item.routeText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    HStack {
+                        ReceiptStatusBadge(status: item.status)
+                        Spacer(minLength: 8)
+                        Text(item.amountText)
+                            .font(.caption.bold())
+                            .monospacedDigit()
+                            .foregroundStyle(item.amount > 0 ? .primary : .secondary)
+                    }
+                }
+            }
+            .padding(11)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? accent.opacity(0.10) : AppSurface.card)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? accent.opacity(0.55) : AppSurface.hairline, lineWidth: isSelected ? 1.4 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var fileIcon: String {
+        switch item.attachment.kind {
+        case .image:
+            return "photo"
+        case .pdf:
+            return "doc.richtext"
+        case .file:
+            return "doc"
+        }
+    }
+}
+
+private struct ReceiptStatusBadge: View {
+    let status: ReceiptAuditStatus
+
+    var body: some View {
+        Label(status.rawValue, systemImage: status.icon)
+            .font(.caption.bold())
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .foregroundStyle(status.tint)
+            .background(status.tint.opacity(0.13), in: Capsule())
+    }
+}
+
+private struct ReceiptAuditDetailRow: View {
+    let title: String
+    let value: String
+    var isEmphasized = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 58, alignment: .leading)
+            Text(value)
+                .font(isEmphasized ? .headline : .callout)
+                .foregroundStyle(isEmphasized ? Color.accentColor : Color.primary)
+                .monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 3)
     }
 }
 
@@ -4257,6 +4783,16 @@ private struct DecimalTextField: View {
     @State private var text = ""
     @FocusState private var isFocused: Bool
 
+    private static let editableFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 2
+        return formatter
+    }()
+
     init(_ placeholder: String, value: Binding<Double>) {
         self.placeholder = placeholder
         _value = value
@@ -4314,13 +4850,7 @@ private struct DecimalTextField: View {
     }
 
     private func editableText(_ number: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = false
-        formatter.minimumFractionDigits = 0
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: number)) ?? ""
+        Self.editableFormatter.string(from: NSNumber(value: number)) ?? ""
     }
 }
 
@@ -4330,8 +4860,8 @@ private struct AttachmentCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
-            AttachmentPreview(attachment: attachment)
-                .frame(height: 146)
+            AttachmentTilePreview(kind: attachment.kind, fileName: attachment.fileName)
+                .frame(height: 118)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 .overlay(
                     RoundedRectangle(cornerRadius: 7)
@@ -4385,6 +4915,52 @@ private struct AttachmentCard: View {
         case .image: .blue
         case .pdf: .red
         case .file: .secondary
+        }
+    }
+}
+
+private struct AttachmentTilePreview: View {
+    let kind: AttachmentKind
+    let fileName: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 52, height: 52)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+
+            Text(fileName)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 10)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppSurface.card)
+    }
+
+    private var icon: String {
+        switch kind {
+        case .image:
+            return "photo"
+        case .pdf:
+            return "doc.richtext"
+        case .file:
+            return "doc"
+        }
+    }
+
+    private var tint: Color {
+        switch kind {
+        case .image:
+            return .blue
+        case .pdf:
+            return .red
+        case .file:
+            return .secondary
         }
     }
 }

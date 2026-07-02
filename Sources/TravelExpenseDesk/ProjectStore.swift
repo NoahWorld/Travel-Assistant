@@ -34,6 +34,7 @@ final class ProjectStore: ObservableObject {
     @Published var selectedProjectID: ReimbursementProject.ID?
     @Published var lastError: String?
     @Published var projectPendingDeletionID: ReimbursementProject.ID?
+    @Published var isImportingInvoices = false
 
     init() {
         let storedAccent = UserDefaults.standard.string(forKey: Self.themeAccentKey)
@@ -206,45 +207,20 @@ final class ProjectStore: ObservableObject {
     }
 
     func importInvoices(_ urls: [URL], to projectID: UUID) {
-        do {
-            let attachments = try AttachmentManager.copyAttachments(from: urls, projectID: projectID)
-            let result = InvoiceImporter.parse(attachments: attachments)
+        guard !urls.isEmpty else { return }
+        isImportingInvoices = true
 
-            guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
-            let hadTravelSegments = !projects[index].travelSegments.isEmpty
-            projects[index].attachments.append(contentsOf: attachments)
-            projects[index].travelSegments.append(contentsOf: result.segments)
-            let mergedDuplicatesSkipped = normalizeImportedSegments(at: index)
-
-            if let firstSegment = result.segments.first {
-                let earliest = result.segments.map(\.departAt).min() ?? firstSegment.departAt
-                let latest = result.segments.map(\.arriveAt).max() ?? firstSegment.arriveAt
-                if hadTravelSegments {
-                    projects[index].startDate = min(projects[index].startDate, earliest)
-                    projects[index].endDate = max(projects[index].endDate, latest)
-                } else {
-                    projects[index].startDate = earliest
-                    projects[index].endDate = latest
-                }
-                projects[index].hasEndDate = true
-                if projects[index].destination.isEmpty {
-                    projects[index].destination = firstSegment.toPlace
-                }
-                if let inferredTier = TravelStandard.inferredCityTier(from: firstSegment.toPlace) {
-                    projects[index].cityTier = inferredTier
+        Task.detached(priority: .userInitiated) { [weak self, urls, projectID] in
+            do {
+                let attachments = try AttachmentManager.copyAttachments(from: urls, projectID: projectID)
+                let result = InvoiceImporter.parse(attachments: attachments)
+                await self?.finishInvoiceImport(attachments: attachments, result: result, to: projectID)
+            } catch {
+                await MainActor.run {
+                    self?.isImportingInvoices = false
+                    self?.lastError = "发票导入失败：\(error.localizedDescription)"
                 }
             }
-
-            projects[index].updatedAt = Date()
-            if result.recognizedFiles > 0 {
-                let skippedCount = result.duplicatesSkipped + mergedDuplicatesSkipped
-                let duplicateText = skippedCount > 0 ? "，已自动去重 \(skippedCount) 条重复票据" : ""
-                lastError = "已导入 \(attachments.count) 个附件，并识别出 \(result.segments.count) 条行程\(duplicateText)。"
-            } else {
-                lastError = "附件已导入，但没有识别出明确行程。可以在“行程与票据”里手动补充起止地点、时间和金额。"
-            }
-        } catch {
-            lastError = "发票导入失败：\(error.localizedDescription)"
         }
     }
 
@@ -330,6 +306,60 @@ final class ProjectStore: ObservableObject {
         }
 
         return removedCount
+    }
+
+    private func finishInvoiceImport(
+        attachments: [AttachmentItem],
+        result: InvoiceImportResult,
+        to projectID: UUID
+    ) {
+        defer { isImportingInvoices = false }
+
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else {
+            attachments.forEach { AttachmentManager.remove($0) }
+            return
+        }
+
+        var updatedProject = projects[index]
+        let hadTravelSegments = !updatedProject.travelSegments.isEmpty
+        updatedProject.attachments.append(contentsOf: attachments)
+        updatedProject.travelSegments.append(contentsOf: result.segments)
+
+        let attachmentsByID = Dictionary(uniqueKeysWithValues: updatedProject.attachments.map { ($0.id, $0) })
+        let originalSegments = updatedProject.travelSegments
+        let deduplicatedSegments = TravelSegmentDeduplicator.deduplicated(originalSegments, attachmentsByID: attachmentsByID)
+        let mergedDuplicatesSkipped = originalSegments.count - deduplicatedSegments.count
+        updatedProject.travelSegments = deduplicatedSegments
+
+        if let firstSegment = result.segments.first {
+            let earliest = result.segments.map(\.departAt).min() ?? firstSegment.departAt
+            let latest = result.segments.map(\.arriveAt).max() ?? firstSegment.arriveAt
+            if hadTravelSegments {
+                updatedProject.startDate = min(updatedProject.startDate, earliest)
+                updatedProject.endDate = max(updatedProject.endDate, latest)
+            } else {
+                updatedProject.startDate = earliest
+                updatedProject.endDate = latest
+            }
+            updatedProject.hasEndDate = true
+            if updatedProject.destination.isEmpty {
+                updatedProject.destination = firstSegment.toPlace
+            }
+            if let inferredTier = TravelStandard.inferredCityTier(from: firstSegment.toPlace) {
+                updatedProject.cityTier = inferredTier
+            }
+        }
+
+        updatedProject.updatedAt = Date()
+        projects[index] = updatedProject
+
+        if result.recognizedFiles > 0 {
+            let skippedCount = result.duplicatesSkipped + mergedDuplicatesSkipped
+            let duplicateText = skippedCount > 0 ? "，已自动去重 \(skippedCount) 条重复票据" : ""
+            lastError = "已导入 \(attachments.count) 个附件，并识别出 \(result.segments.count) 条行程\(duplicateText)。"
+        } else {
+            lastError = "附件已导入，但没有识别出明确行程。可以在“票据审核”里查看未识别文件，或回到报销单手动补充。"
+        }
     }
 }
 

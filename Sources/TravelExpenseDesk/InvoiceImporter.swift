@@ -3,7 +3,7 @@ import Foundation
 import PDFKit
 import Vision
 
-struct InvoiceImportResult {
+struct InvoiceImportResult: Sendable {
     var segments: [TravelSegment] = []
     var recognizedFiles: Int = 0
     var duplicatesSkipped: Int = 0
