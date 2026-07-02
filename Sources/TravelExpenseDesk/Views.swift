@@ -2259,6 +2259,9 @@ struct ProjectDetailView: View {
     @State private var isIconPickerPresented = false
     @State private var isProjectInfoPresented = false
     @State private var isReimbursementStandardsPresented = false
+    @State private var isTravelSegmentsExpanded = true
+    @State private var isSpecialExpensesExpanded = false
+    @State private var isAttachmentsExpanded = false
 
     private var generatedProjectCode: String {
         let formatter = DateFormatter()
@@ -2365,6 +2368,8 @@ struct ProjectDetailView: View {
     private func toolbarActions(showLabels: Bool) -> some View {
         Button {
             chooseInvoices()
+            isTravelSegmentsExpanded = true
+            isAttachmentsExpanded = true
         } label: {
             if showLabels {
                 Label("导入发票", systemImage: "doc.text.viewfinder")
@@ -2379,6 +2384,7 @@ struct ProjectDetailView: View {
 
         Button {
             store.addTravelSegment(to: project.id)
+            isTravelSegmentsExpanded = true
         } label: {
             if showLabels {
                 Label("添加行程", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
@@ -2392,6 +2398,7 @@ struct ProjectDetailView: View {
 
         Button {
             store.addExpense(to: project.id)
+            isSpecialExpensesExpanded = true
         } label: {
             if showLabels {
                 Label("添加费用", systemImage: "plus.rectangle.on.rectangle")
@@ -2750,19 +2757,27 @@ struct ProjectDetailView: View {
     }
 
     private var expensesSection: some View {
-        Panel(title: "特殊费用", systemImage: "list.bullet.rectangle", accent: .orange) {
+        CollapsiblePanel(
+            title: "特殊费用",
+            systemImage: "list.bullet.rectangle",
+            summary: specialExpensesSummary,
+            accent: .orange,
+            isExpanded: $isSpecialExpensesExpanded
+        ) {
+            Button {
+                store.addExpense(to: project.id)
+                isSpecialExpensesExpanded = true
+            } label: {
+                sectionActionLabel("添加费用", systemImage: "plus")
+            }
+            .buttonStyle(.bordered)
+            .help("添加特殊费用")
+        } content: {
             VStack(spacing: 10) {
-                HStack {
-                    Text("默认无需填写。仅在无发票、特殊审批或无法归入行程票据时手动补充；常规票据请在“行程与票据”中导入识别。")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        store.addExpense(to: project.id)
-                    } label: {
-                        Label("添加费用", systemImage: "plus")
-                    }
-                }
+                Text("默认无需填写。仅在无发票、特殊审批或无法归入行程票据时手动补充；常规票据请在“行程与票据”中导入识别。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(spacing: 8) {
                     if project.expenses.isEmpty {
@@ -2788,25 +2803,36 @@ struct ProjectDetailView: View {
     }
 
     private var travelSegmentsSection: some View {
-        Panel(title: "行程与票据", systemImage: "point.topleft.down.curvedto.point.bottomright.up", accent: .blue) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("可以手动录入起止地点、时间、出行方式、单程/往返报销和金额；也可以导入发票自动识别。")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        store.addTravelSegment(to: project.id)
-                    } label: {
-                        Label("添加行程", systemImage: "plus")
-                    }
+        CollapsiblePanel(
+            title: "行程与票据",
+            systemImage: "point.topleft.down.curvedto.point.bottomright.up",
+            summary: travelSegmentsSummary,
+            accent: .blue,
+            isExpanded: $isTravelSegmentsExpanded
+        ) {
+            Button {
+                store.addTravelSegment(to: project.id)
+                isTravelSegmentsExpanded = true
+            } label: {
+                sectionActionLabel("添加行程", systemImage: "plus")
+            }
+            .buttonStyle(.bordered)
+            .help("添加行程")
 
-                    Button {
-                        chooseInvoices()
-                    } label: {
-                        Label("导入发票识别", systemImage: "doc.text.viewfinder")
-                    }
-                }
+            Button {
+                chooseInvoices()
+                isTravelSegmentsExpanded = true
+                isAttachmentsExpanded = true
+            } label: {
+                sectionActionLabel("导入发票识别", systemImage: "doc.text.viewfinder")
+            }
+            .buttonStyle(.bordered)
+            .help("导入发票识别")
+        } content: {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("可以手动录入起止地点、时间、出行方式、单程/往返报销和金额；也可以导入发票自动识别。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
 
                 if project.travelSegments.isEmpty {
                     ContentUnavailableView("暂无行程", systemImage: "arrow.triangle.swap", description: Text("添加一条行程，或导入高铁、飞机、打车发票进行识别。"))
@@ -2825,25 +2851,36 @@ struct ProjectDetailView: View {
     }
 
     private var attachmentsSection: some View {
-        Panel(title: "附件", systemImage: "paperclip", accent: .purple) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("仅支持上传 PDF 和截图；导出 PDF 时会按上传顺序追加附件内容。")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        chooseInvoices()
-                    } label: {
-                        Label("导入发票识别", systemImage: "doc.text.viewfinder")
-                    }
+        CollapsiblePanel(
+            title: "附件",
+            systemImage: "paperclip",
+            summary: attachmentsSummary,
+            accent: .purple,
+            isExpanded: $isAttachmentsExpanded
+        ) {
+            Button {
+                chooseInvoices()
+                isTravelSegmentsExpanded = true
+                isAttachmentsExpanded = true
+            } label: {
+                sectionActionLabel("导入发票识别", systemImage: "doc.text.viewfinder")
+            }
+            .buttonStyle(.bordered)
+            .help("导入发票识别")
 
-                    Button {
-                        chooseAttachments()
-                    } label: {
-                        Label("添加附件", systemImage: "plus")
-                    }
-                }
+            Button {
+                chooseAttachments()
+                isAttachmentsExpanded = true
+            } label: {
+                sectionActionLabel("添加附件", systemImage: "plus")
+            }
+            .buttonStyle(.bordered)
+            .help("添加附件")
+        } content: {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("仅支持上传 PDF 和截图；导出 PDF 时会按上传顺序追加附件内容。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
 
                 if project.attachments.isEmpty {
                     ContentUnavailableView("暂无附件", systemImage: "paperclip", description: Text("添加截图或 PDF 后会保存在本机项目里，并在导出 PDF 时依次展示。"))
@@ -2858,6 +2895,30 @@ struct ProjectDetailView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var travelSegmentsSummary: String {
+        guard !project.travelSegments.isEmpty else { return "暂无行程" }
+        return "\(project.travelSegments.count) 条 · \(project.travelSegmentTotal.formatted(AppFormatters.currency))"
+    }
+
+    private var specialExpensesSummary: String {
+        guard !project.expenses.isEmpty else { return "无特殊费用" }
+        return "\(project.expenses.count) 条 · \(project.additionalExpenseTotal.formatted(AppFormatters.currency))"
+    }
+
+    private var attachmentsSummary: String {
+        guard !project.attachments.isEmpty else { return "暂无附件" }
+        return "\(project.attachments.count) 个文件"
+    }
+
+    @ViewBuilder
+    private func sectionActionLabel(_ title: String, systemImage: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            Label(title, systemImage: systemImage)
+            Image(systemName: systemImage)
+                .frame(width: 28, height: 24)
         }
     }
 
@@ -3480,6 +3541,86 @@ private struct Panel<Content: View>: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(AppSurface.hairline)
         )
+    }
+}
+
+private struct CollapsiblePanel<Actions: View, Content: View>: View {
+    let title: String
+    let systemImage: String
+    let summary: String
+    var accent: Color = .blue
+    @Binding var isExpanded: Bool
+    @ViewBuilder let actions: Actions
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isExpanded ? 12 : 0) {
+            HStack(spacing: 10) {
+                Button {
+                    toggle()
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: systemImage)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(accent)
+                            .frame(width: 26, height: 26)
+                            .background(accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 7))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            Text(summary)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isExpanded ? "收起\(title)" : "展开\(title)")
+
+                Spacer(minLength: 8)
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        actions
+                    }
+
+                    EmptyView()
+                }
+
+                Button {
+                    toggle()
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.borderless)
+                .help(isExpanded ? "收起\(title)" : "展开\(title)")
+            }
+
+            if isExpanded {
+                content
+                    .transition(.opacity)
+            }
+        }
+        .padding(16)
+        .background(AppSurface.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppSurface.hairline)
+        )
+        .animation(.easeInOut(duration: 0.16), value: isExpanded)
+    }
+
+    private func toggle() {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            isExpanded.toggle()
+        }
     }
 }
 
