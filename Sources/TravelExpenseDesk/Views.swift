@@ -5011,9 +5011,11 @@ private struct DecimalTextField: View {
 }
 
 private enum AppFocus {
-    static func endEditing() {
-        guard let window = NSApp.keyWindow else { return }
-        window.makeFirstResponder(nil)
+    @MainActor
+    static func endEditing(in window: NSWindow? = nil) {
+        guard let targetWindow = window ?? NSApp.keyWindow else { return }
+        targetWindow.endEditing(for: nil)
+        targetWindow.makeFirstResponder(nil)
     }
 }
 
@@ -5040,10 +5042,6 @@ private struct FocusDismissBridge: NSViewRepresentable {
     final class Coordinator {
         private weak var view: NSView?
         private var monitor: Any?
-
-        deinit {
-            detach()
-        }
 
         func attach(to view: NSView) {
             self.view = view
@@ -5077,27 +5075,25 @@ private struct FocusDismissBridge: NSViewRepresentable {
 
         private func dismissForMouseDown(_ event: NSEvent) {
             guard let window = view?.window,
-                  event.window === window,
-                  window.firstResponder is NSTextView else { return }
+                  event.window === window else { return }
 
-            let hitView = window.contentView?.hitTest(event.locationInWindow)
-            guard hitView?.isTextInputDescendant != true else { return }
+            guard window.contentView?.containsTextInput(at: event.locationInWindow) != true else { return }
 
-            window.makeFirstResponder(nil)
+            AppFocus.endEditing(in: window)
         }
     }
 }
 
 private extension NSView {
-    var isTextInputDescendant: Bool {
-        var current: NSView? = self
-        while let view = current {
-            if view is NSTextField || view is NSTextView {
-                return true
-            }
-            current = view.superview
+    func containsTextInput(at pointInWindow: NSPoint) -> Bool {
+        guard !isHidden else { return false }
+
+        if self is NSTextField || self is NSTextView {
+            let localPoint = convert(pointInWindow, from: nil)
+            return bounds.contains(localPoint)
         }
-        return false
+
+        return subviews.contains { $0.containsTextInput(at: pointInWindow) }
     }
 }
 
