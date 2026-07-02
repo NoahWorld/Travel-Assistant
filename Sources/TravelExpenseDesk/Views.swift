@@ -1,4 +1,4 @@
-import AppKit
+@preconcurrency import AppKit
 import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -2336,6 +2336,7 @@ struct ProjectDetailView: View {
                 .padding(20)
                 .frame(width: 680)
         }
+        .background(FocusDismissBridge())
     }
 
     private var detailToolbar: some View {
@@ -4954,6 +4955,9 @@ private struct DecimalTextField: View {
         TextField(placeholder, text: $text)
             .textFieldStyle(.roundedBorder)
             .focused($isFocused)
+            .onSubmit {
+                AppFocus.endEditing()
+            }
             .onAppear {
                 text = formatted(value)
             }
@@ -5003,6 +5007,97 @@ private struct DecimalTextField: View {
 
     private func editableText(_ number: Double) -> String {
         Self.editableFormatter.string(from: NSNumber(value: number)) ?? ""
+    }
+}
+
+private enum AppFocus {
+    static func endEditing() {
+        guard let window = NSApp.keyWindow else { return }
+        window.makeFirstResponder(nil)
+    }
+}
+
+private struct FocusDismissBridge: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.attach(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.attach(to: nsView)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    @MainActor
+    final class Coordinator {
+        private weak var view: NSView?
+        private var monitor: Any?
+
+        deinit {
+            detach()
+        }
+
+        func attach(to view: NSView) {
+            self.view = view
+            guard monitor == nil else { return }
+
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { @MainActor [weak self] event in
+                self?.handle(event)
+                return event
+            }
+        }
+
+        func detach() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+
+        private func handle(_ event: NSEvent) {
+            switch event.type {
+            case .leftMouseDown, .rightMouseDown:
+                dismissForMouseDown(event)
+            case .keyDown:
+                if event.keyCode == 36 || event.keyCode == 76 || event.keyCode == 53 {
+                    AppFocus.endEditing()
+                }
+            default:
+                break
+            }
+        }
+
+        private func dismissForMouseDown(_ event: NSEvent) {
+            guard let window = view?.window,
+                  event.window === window,
+                  window.firstResponder is NSTextView else { return }
+
+            let hitView = window.contentView?.hitTest(event.locationInWindow)
+            guard hitView?.isTextInputDescendant != true else { return }
+
+            window.makeFirstResponder(nil)
+        }
+    }
+}
+
+private extension NSView {
+    var isTextInputDescendant: Bool {
+        var current: NSView? = self
+        while let view = current {
+            if view is NSTextField || view is NSTextView {
+                return true
+            }
+            current = view.superview
+        }
+        return false
     }
 }
 
